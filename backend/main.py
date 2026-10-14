@@ -234,6 +234,90 @@ def bg(coro):
     return t
 
 # ----------------------------------------------------------------- Бот
+
+class Item(BaseModel):
+    inventory_id: UUID; quantity: int = Field(gt=0, le=1000)
+
+class CartIn(BaseModel):
+    items: list[Item] = Field(max_length=200)
+
+class OrderIn(BaseModel):
+    items: list[Item] = Field(min_length=1, max_length=100)
+    comment: str = Field("", max_length=500)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+class CityIn(BaseModel):
+    city_id: str = Field(min_length=2, max_length=40)
+
+class OrderPreviewIn(BaseModel):
+    items: list[Item] = Field(min_length=1, max_length=100)
+
+class NotifyIn(BaseModel):
+    notify_stock: bool
+
+class StockIn(BaseModel):
+    inventory_id: UUID; quantity: int = Field(ge=0, le=100000)
+    kind: Literal["receipt", "adjust"] = "adjust"; reason: str = Field("", max_length=200)
+
+class TransferIn(BaseModel):
+    from_inventory_id: UUID; to_inventory_id: UUID; quantity: int = Field(gt=0, le=100000); reason: str = Field("", max_length=200)
+
+class StatusIn(BaseModel):
+    status: Literal["confirmed", "prepared", "issued", "cancelled", "returned"]
+
+class SettlementIn(BaseModel):
+    city_id: str = Field(min_length=2, max_length=40)
+    amount: float = Field(gt=0, le=1000000)
+    note: str = Field("", max_length=200)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+class ProductIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200); description: str = Field("", max_length=2000)
+    category_id: int; price: Optional[float] = Field(None, ge=0, le=100000); wholesale_enabled: bool = False
+
+class ProductPatch(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200); description: Optional[str] = Field(None, max_length=2000)
+    category_id: Optional[int] = None
+    active: Optional[bool] = None; image_path: Optional[str] = Field(None, max_length=300)
+
+class PricesIn(BaseModel):
+    price: Optional[float] = Field(None, ge=0, le=100000)
+    cost_price: Optional[float] = Field(None, ge=0, le=100000)
+
+class TierRow(BaseModel):
+    min: int = Field(ge=1); price: float = Field(ge=0, le=100000)
+
+class TiersIn(BaseModel):
+    tiers: list[TierRow] = Field(min_length=1, max_length=20)
+
+class CustomerEditIn(BaseModel):
+    items: list[Item] = Field(min_length=1, max_length=100)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+class ApprovalLine(BaseModel):
+    order_item_id: UUID; unit_price: float = Field(ge=0, le=100000)
+
+class ApprovalIn(BaseModel):
+    prices: list[ApprovalLine] = Field(min_length=1, max_length=100)
+
+class VariantIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200); price: Optional[float] = Field(None, ge=0, le=100000)
+
+class VariantPatch(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=200); price: Optional[float] = Field(None, ge=0, le=100000)
+
+class CategoryIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100); sort: int = 0
+
+class BroadcastIn(BaseModel):
+    city_id: Optional[str] = None
+    mode: Literal["products", "categories", "new"]
+    product_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    category_ids: list[int] = Field(default_factory=list, max_length=50)
+    text_hash: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
 @router.message(CommandStart())
 async def start(m: Message):
     # Фиксируем, что бот может писать пользователю (для рассылок).
@@ -293,20 +377,6 @@ async def webhook(req: Request):
     return {"ok": True}
 
 # ----------------------------------------------------------------- Покупатель
-class Item(BaseModel):
-    inventory_id: UUID; quantity: int = Field(gt=0, le=1000)
-class CartIn(BaseModel):
-    items: list[Item] = Field(max_length=200)
-class OrderIn(BaseModel):
-    items: list[Item] = Field(min_length=1, max_length=100)
-    comment: str = Field("", max_length=500)
-    idempotency_key: str = Field(min_length=8, max_length=100)
-class CityIn(BaseModel):
-    city_id: str = Field(min_length=2, max_length=40)
-class OrderPreviewIn(BaseModel):
-    items: list[Item] = Field(min_length=1, max_length=100)
-class NotifyIn(BaseModel):
-    notify_stock: bool
 
 @app.get("/api/me")
 async def me(u=Depends(current_user)):
@@ -429,11 +499,6 @@ async def admin_catalog(ctx=Depends(admin_ctx)):
     return await rpc("admin_catalog", {"p_actor": ctx["telegram_id"]})
 
 # ----------------------------------------------------------------- Админ: склад
-class StockIn(BaseModel):
-    inventory_id: UUID; quantity: int = Field(ge=0, le=100000)
-    kind: Literal["receipt", "adjust"] = "adjust"; reason: str = Field("", max_length=200)
-class TransferIn(BaseModel):
-    from_inventory_id: UUID; to_inventory_id: UUID; quantity: int = Field(gt=0, le=100000); reason: str = Field("", max_length=200)
 
 @app.get("/api/admin/inventory")
 async def admin_inventory(city: Optional[str] = None, ctx=Depends(admin_ctx)):
@@ -458,8 +523,6 @@ async def transfer_stock(b: TransferIn, ctx=Depends(admin_ctx)):
                                               "p_to": str(b.to_inventory_id), "p_qty": b.quantity, "p_reason": b.reason.strip() or None})
 
 # ----------------------------------------------------------------- Админ: заказы
-class StatusIn(BaseModel):
-    status: Literal["confirmed", "prepared", "issued", "cancelled", "returned"]
 
 @app.get("/api/admin/orders")
 async def admin_list_orders(city: Optional[str] = None, status: Optional[str] = None, limit: int = Query(100, ge=1, le=300), ctx=Depends(admin_ctx)):
@@ -501,11 +564,6 @@ async def admin_mark_paid(order_id: UUID, ctx=Depends(admin_ctx)):
     return await rpc("mark_order_paid", {"p_order": str(order_id), "p_actor": ctx["telegram_id"]})
 
 # ----------------------------------------------------------------- Админ: взаиморасчёты
-class SettlementIn(BaseModel):
-    city_id: str = Field(min_length=2, max_length=40)
-    amount: float = Field(gt=0, le=1000000)
-    note: str = Field("", max_length=200)
-    idempotency_key: str = Field(min_length=8, max_length=100)
 
 @app.get("/api/admin/settlement")
 async def admin_settlement(city: Optional[str] = None, ctx=Depends(admin_ctx)):
@@ -526,33 +584,6 @@ async def admin_record_transfer(b: SettlementIn, ctx=Depends(admin_ctx)):
                                               "p_amount": round(b.amount, 2), "p_note": b.note.strip(), "p_key": b.idempotency_key})
 
 # ----------------------------------------------------------------- Админ: товары, категории, цены (владелец)
-class ProductIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200); description: str = Field("", max_length=2000)
-    category_id: int; price: Optional[float] = Field(None, ge=0, le=100000); wholesale_enabled: bool = False
-class ProductPatch(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=200); description: Optional[str] = Field(None, max_length=2000)
-    category_id: Optional[int] = None
-    active: Optional[bool] = None; image_path: Optional[str] = Field(None, max_length=300)
-class PricesIn(BaseModel):
-    price: Optional[float] = Field(None, ge=0, le=100000)
-    cost_price: Optional[float] = Field(None, ge=0, le=100000)
-class TierRow(BaseModel):
-    min: int = Field(ge=1); price: float = Field(ge=0, le=100000)
-class TiersIn(BaseModel):
-    tiers: list[TierRow] = Field(min_length=1, max_length=20)
-class CustomerEditIn(BaseModel):
-    items: list[Item] = Field(min_length=1, max_length=100)
-    idempotency_key: str = Field(min_length=8, max_length=100)
-class ApprovalLine(BaseModel):
-    order_item_id: UUID; unit_price: float = Field(ge=0, le=100000)
-class ApprovalIn(BaseModel):
-    prices: list[ApprovalLine] = Field(min_length=1, max_length=100)
-class VariantIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200); price: Optional[float] = Field(None, ge=0, le=100000)
-class VariantPatch(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=200); price: Optional[float] = Field(None, ge=0, le=100000)
-class CategoryIn(BaseModel):
-    name: str = Field(min_length=1, max_length=100); sort: int = 0
 @app.post("/api/admin/products")
 async def admin_create_product(b: ProductIn, ctx=Depends(admin_ctx)):
     require_owner(ctx)
@@ -627,13 +658,6 @@ def _broadcast_text(city_name: str, mode: str, chosen: list, cat_names: dict) ->
         body = "В наличии появились:\n" + "\n".join(lines)
     return head + body + f"\n\nМагазин: {WEBAPP}"
 
-class BroadcastIn(BaseModel):
-    city_id: Optional[str] = None
-    mode: Literal["products", "categories", "new"]
-    product_ids: list[UUID] = Field(default_factory=list, max_length=200)
-    category_ids: list[int] = Field(default_factory=list, max_length=50)
-    text_hash: str = Field(min_length=64, max_length=64)
-    idempotency_key: str = Field(min_length=8, max_length=100)
 
 async def build_broadcast(city_id: str, mode: str, product_ids: list, category_ids: list) -> dict:
     """Текст строится ТОЛЬКО из товаров, которые сейчас есть в городе (get_catalog). Нулевые остатки не попадают."""
