@@ -98,16 +98,13 @@ begin
   -- ---------------------------------------------------------------- ОПЛАТА → ВЫДАЧА → ВОЗВРАТ
   -- Не оплачен — статус сам по себе не делает заказ оплаченным
   select paid_at into ts from orders where id=oid; assert ts is null, 'new order must not be paid';
-  perform mark_order_paid(oid, OWNER);
-  perform pg_temp.fails(format('select mark_order_paid(%L,%s)', oid, OWNER), 'already_paid');
   perform change_order_status(oid,'confirmed',OWNER);
   perform change_order_status(oid,'prepared',OWNER);
   perform change_order_status(oid,'issued',OWNER);
   select quantity, reserved_quantity into iq, rq from inventory where id=em_m; assert iq=8 and rq=0, 'issued: 8/0, got '||iq||'/'||rq;
+  select paid_at, paid_amount into ts, tot from orders where id=oid; assert ts is not null and tot=30, 'issue marks paid on total';
   perform pg_temp.fails(format('select change_order_status(%L,''cancelled'',%s)', oid, HANN), 'forbidden');
-  perform change_order_status(oid,'returned',OWNER);
-  select quantity into iq from inventory where id=em_m; assert iq=10, 'return restores stock to 10';
-  select refunded_amount into tot from orders where id=oid; assert tot=30, 'refund must equal paid amount';
+  perform pg_temp.fails(format('select change_order_status(%L,''returned'',%s)', oid, OWNER), 'bad_transition');
 
   -- ---------------------------------------------------------------- ОТМЕНА ОСВОБОЖДАЕТ РЕЗЕРВ
   r := create_order(u2,'hannover',jsonb_build_array(jsonb_build_object('inventory_id',em_h,'quantity',2)),'@t','','k-H1');
@@ -118,16 +115,17 @@ begin
 
   -- ---------------------------------------------------------------- ВЗАИМОРАСЧЁТЫ
   r := create_order(u,'muenchen',jsonb_build_array(jsonb_build_object('inventory_id',em_m,'quantity',1)),'@t','','k-B');
-  perform mark_order_paid((r->>'id')::uuid, OWNER);
   perform change_order_status((r->>'id')::uuid,'confirmed',OWNER);
+  perform change_order_status((r->>'id')::uuid,'prepared',OWNER);
+  perform change_order_status((r->>'id')::uuid,'issued',OWNER);
   s := city_settlement(OWNER,'muenchen');
   assert (s->>'collected')::numeric = 45, 'collected 30+15=45, got '||(s->>'collected');
-  assert (s->>'refunded')::numeric = 30, 'refunded 30';
-  assert (s->>'owed')::numeric = 15, 'owed 15';
-  perform pg_temp.fails(format('select record_cash_transfer(%s,%L,20,''много'',''t-over'')', OWNER, 'muenchen'), 'exceeds_balance');
-  r := record_cash_transfer(OWNER,'muenchen',15,'передача','t-1');
+  assert (s->>'refunded')::numeric = 0, 'no refunds';
+  assert (s->>'owed')::numeric = 45, 'owed 45';
+  perform pg_temp.fails(format('select record_cash_transfer(%s,%L,50,''много'',''t-over'')', OWNER, 'muenchen'), 'exceeds_balance');
+  r := record_cash_transfer(OWNER,'muenchen',45,'передача','t-1');
   assert (r->>'duplicate')::boolean = false, 'first transfer';
-  r := record_cash_transfer(OWNER,'muenchen',15,'передача','t-1');
+  r := record_cash_transfer(OWNER,'muenchen',45,'передача','t-1');
   assert (r->>'duplicate')::boolean = true, 'same key must not double-count';
   s := city_settlement(OWNER,'muenchen'); assert (s->>'owed')::numeric = 0, 'owed must be 0 after transfer';
   -- Hannover: неоплаченный заказ не попадает в сумму к передаче

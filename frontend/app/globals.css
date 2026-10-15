@@ -60,16 +60,16 @@ input,select,textarea{font-family:inherit;color:inherit}
 .mv-btn:disabled{background:var(--surface-3);color:var(--muted);cursor:not-allowed}
 .mv-btn.ghost{background:var(--surface-2);border:1px solid var(--border);color:var(--text-2)}
 .mv-btn.danger{background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35);color:var(--danger)}
-.mv-btn.sm{min-height:38px;border-radius:var(--r-md);font-size:13px;padding:0 14px;width:auto}
+.mv-btn.sm{min-height:44px;border-radius:var(--r-md);font-size:13px;padding:0 14px;width:auto}
 .mv-link{color:var(--muted);font-size:13px;padding:var(--sp-2)} .mv-link:active{color:var(--text)}
 .mv-plus{width:36px;height:36px;border-radius:var(--r-md);background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform var(--t-fast),background var(--t-fast)}
 .mv-plus:active{transform:scale(.9)} .mv-plus:disabled{background:var(--surface-3);color:var(--muted)}
 
 /* ============ Input ============ */
-.mv-input{width:100%;min-height:50px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:0 var(--sp-4);font-size:15px;outline:none;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
+.mv-input{width:100%;min-height:50px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:0 var(--sp-4);font-size:16px;outline:none;transition:border-color var(--t-fast),box-shadow var(--t-fast)}
 .mv-input::placeholder{color:var(--muted)}
 .mv-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(90,169,255,.15)}
-.mv-input.sm{min-height:42px;border-radius:var(--r-md);font-size:14px}
+.mv-input.sm{min-height:44px;border-radius:var(--r-md);font-size:16px}
 select.mv-input{appearance:none}
 .mv-label{font-size:12px;color:var(--muted);margin:0 0 6px 2px;display:block}
 
@@ -154,7 +154,7 @@ select.mv-input{appearance:none}
 .mv-stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:var(--sp-4)}
 .mv-stat .v{font-size:26px;font-weight:800;margin-top:6px} .mv-stat .l{font-size:12px;color:var(--muted)}
 .mv-seg{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
-.mv-seg button{flex-shrink:0;border-radius:var(--r-pill);padding:8px 14px;font-size:12.5px;font-weight:700;background:var(--surface);border:1px solid var(--border);color:var(--text-2);transition:all var(--t-fast)}
+.mv-seg button{flex-shrink:0;min-height:42px;border-radius:var(--r-pill);padding:8px 16px;font-size:12.5px;font-weight:700;background:var(--surface);border:1px solid var(--border);color:var(--text-2);transition:all var(--t-fast)}
 .mv-seg button.on{background:var(--primary);border-color:var(--primary);color:#fff}
 .mv-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 .mv-sticky{position:fixed;left:0;right:0;bottom:calc(var(--nav-h) + 18px + env(safe-area-inset-bottom));z-index:35;padding:0 var(--sp-4)}
@@ -167,3 +167,48 @@ select.mv-input{appearance:none}
 .mv-city{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:var(--r-pill);font-size:12px;font-weight:800;letter-spacing:.06em;color:#fff;background:linear-gradient(120deg,#2f56d6,#6a4bd8);box-shadow:var(--shadow-glow)}
 .mv-city-tag{display:inline-block;margin-bottom:4px;padding:2px 10px;border-radius:6px;font-size:12px;font-weight:800;letter-spacing:.08em;color:#8ec5ff;background:rgba(90,169,255,.12);border:1px solid rgba(90,169,255,.35)}
 .mv-city-line .mv-link{margin-left:auto}
+
+/* ============ Admin: телефон ============ */
+/* Липкая панель поиска и фильтров: всегда под рукой при прокрутке списка */
+.mv-toolbar{position:sticky;top:0;z-index:30;margin:var(--sp-2) calc(-1*var(--sp-4)) 0;padding:var(--sp-2) var(--sp-4) var(--sp-3);background:rgba(8,8,12,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.mv-toolbar .mv-col{gap:var(--sp-2)}
+.mv-search{position:relative;display:flex;align-items:center}
+.mv-search>svg{position:absolute;left:16px;color:var(--muted);pointer-events:none}
+.mv-search .mv-input{padding-left:46px;padding-right:46px}
+.mv-search-x{position:absolute;right:4px;width:44px;height:44px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+/* Горизонтальные чипы: категории и статусы, прокрутка пальцем */
+.mv-chips{display:flex;gap:8px;overflow-x:auto;margin:0 calc(-1*var(--sp-4));padding:2px var(--sp-4);scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+.mv-chips::after{content:"";flex:0 0 var(--sp-2)}
+.mv-pill{flex-shrink:0;scroll-snap-align:start;min-height:40px;padding:0 14px;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;transition:transform var(--t-fast),background var(--t-fast),border-color var(--t-fast)}
+.mv-pill:active{transform:scale(.96)}
+.mv-pill.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.mv-pill em{font-style:normal;font-size:12px;font-weight:700;opacity:.75}
+/* Совпадение по вкусу в карточке товара */
+.mv-match{font-size:12.5px;color:var(--accent);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mv-count{font-size:13px;color:var(--muted);margin:10px 2px 2px}
+/* Крупные цели касания */
+.mv-tap{min-height:64px;width:100%;text-align:left}
+.mv-qty button{width:44px;height:44px;border-radius:var(--r-md)}
+.mv-qty input{min-height:44px}
+.mv-qty input::-webkit-outer-spin-button,.mv-qty input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.mv-qty input{-moz-appearance:textfield}
+.mv-link{min-height:40px;display:inline-flex;align-items:center;padding:0 10px}
+.mv-nav button{min-height:58px;font-size:11.5px}
+.mv-sheet{max-height:92vh;max-height:92dvh}
+/* Разделы внутри шторки */
+.mv-sheet-title{margin:16px 0 4px;font-size:20px;font-weight:800;overflow-wrap:anywhere}
+.mv-section{margin-top:var(--sp-5);display:flex;flex-direction:column;gap:var(--sp-3)}
+.mv-section>h3,.mv-section-h{margin:0;font-size:16px;font-weight:800}
+.mv-section-h{margin:var(--sp-5) 0 var(--sp-2)}
+.mv-note{font-size:13px;color:var(--muted);background:var(--surface-2);border-radius:var(--r-md);padding:10px 12px;margin:0 0 12px}
+.mv-kv{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:14px}
+.mv-w-110{width:110px;text-align:right}
+.mv-var{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:52px;font-size:14px;border-bottom:1px solid var(--border)}
+.mv-var>span:first-child{flex:1;min-width:0}
+.mv-check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;color:var(--text-2)}
+.mv-check input{width:22px;height:22px;flex-shrink:0;accent-color:var(--primary)}
+.mv-details summary{min-height:48px;display:flex;align-items:center;font-weight:800;cursor:pointer;list-style:none}
+.mv-details summary::-webkit-details-marker{display:none}
+
+/* Поле списка (вкусы, товары пачкой) */
+.mv-area{min-height:132px;height:auto;padding:12px 16px;line-height:1.5;resize:vertical;font-family:inherit}
