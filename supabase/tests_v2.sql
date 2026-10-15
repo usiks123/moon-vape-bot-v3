@@ -98,7 +98,6 @@ begin
   -- ---------------------------------------------------------------- ОПЛАТА → ВЫДАЧА → ВОЗВРАТ
   -- Не оплачен — статус сам по себе не делает заказ оплаченным
   select paid_at into ts from orders where id=oid; assert ts is null, 'new order must not be paid';
-  perform change_order_status(oid,'confirmed',OWNER);
   perform change_order_status(oid,'prepared',OWNER);
   perform change_order_status(oid,'issued',OWNER);
   select quantity, reserved_quantity into iq, rq from inventory where id=em_m; assert iq=8 and rq=0, 'issued: 8/0, got '||iq||'/'||rq;
@@ -115,7 +114,6 @@ begin
 
   -- ---------------------------------------------------------------- ВЗАИМОРАСЧЁТЫ
   r := create_order(u,'muenchen',jsonb_build_array(jsonb_build_object('inventory_id',em_m,'quantity',1)),'@t','','k-B');
-  perform change_order_status((r->>'id')::uuid,'confirmed',OWNER);
   perform change_order_status((r->>'id')::uuid,'prepared',OWNER);
   perform change_order_status((r->>'id')::uuid,'issued',OWNER);
   s := city_settlement(OWNER,'muenchen');

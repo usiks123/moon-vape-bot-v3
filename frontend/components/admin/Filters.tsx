@@ -55,3 +55,25 @@ export function SearchField({ value, onChange, placeholder }: { value: string; o
     </div>
   )
 }
+
+// Бренды жидкостей для фильтра на складе. Бренд определяется по названию товара.
+export const BRANDS = ['Elfliq', 'Vozol', 'Chaser']
+export const brandOf = (name: any): string => { const n = norm(name); return BRANDS.find(b => n.includes(norm(b))) || '' }
+export function BrandChips({ value, onChange, counts, allCount }: {
+  value: string; onChange: (v: string) => void; counts: Record<string, number>; allCount: number
+}) {
+  const items: [string, string, number][] = [
+    ['', 'Все бренды', allCount],
+    ...BRANDS.map((b): [string, string, number] => [b, b, counts[b] || 0]),
+    ['other', 'Другие', counts.other || 0],
+  ]
+  return (
+    <div className="mv-chips" role="tablist" aria-label="Бренды">
+      {items.map(([k, label, n]) => (
+        <button key={k || 'all'} role="tab" aria-selected={value === k} className={'mv-pill' + (value === k ? ' on' : '')} onClick={() => onChange(k)}>
+          {label}<em>{n}</em>
+        </button>
+      ))}
+    </div>
+  )
+}

@@ -14,7 +14,7 @@ export default function Dashboard({ role, cityId, cities, onNotify }: { role: 'o
   const cityLabel = (id: string) => (cities.find(c => c.id === id)?.name || id || 'Без города').toUpperCase()
 
   const o = stats?.orders || {}
-  const orderRows = ['new', 'confirmed', 'prepared', 'issued', 'cancelled'].map(k => [ST[k], o[k] ?? 0, k])
+  const orderRows = ['new', 'prepared', 'issued', 'cancelled'].map(k => [ST[k], o[k] ?? 0, k])
   const s = stats?.stock || {}
 
   return (<>

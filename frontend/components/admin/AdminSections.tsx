@@ -7,9 +7,9 @@ import { CategoryChips, SearchField, countByCategory, matchProduct, norm } from 
 type Props = { role: 'owner' | 'city_admin'; cityId: string | null; cities: any[]; catalog: any; onNotify: Notify; onRefresh: () => void }
 
 // Допустимые переходы совпадают с change_order_status в БД.
-const NEXT: Record<string, string[]> = { new: ['confirmed', 'cancelled'], confirmed: ['prepared', 'cancelled'], prepared: ['issued', 'cancelled'], issued: [] }
-const ACTION: Record<string, string> = { confirmed: 'Подтвердить', prepared: 'Отметить подготовленным', issued: 'Выдать покупателю', cancelled: 'Отменить заказ' }
-const FILTERS: [string, string][] = [['', 'Все'], ['new', 'Новые'], ['confirmed', 'Подтверждены'], ['prepared', 'Подготовлены'], ['issued', 'Выданы'], ['cancelled', 'Отменены']]
+const NEXT: Record<string, string[]> = { new: ['prepared', 'cancelled'], prepared: ['issued', 'cancelled'], issued: [] }
+const ACTION: Record<string, string> = { prepared: 'Отметить подготовленным', issued: 'Выдать покупателю', cancelled: 'Отменить заказ' }
+const FILTERS: [string, string][] = [['', 'Все'], ['new', 'Новые'], ['prepared', 'Подготовлены'], ['issued', 'Выданы'], ['cancelled', 'Отменены']]
 const Kv = ({ l, v }: any) => <div className="mv-row mv-between" style={{ alignItems: 'flex-start', fontSize: 14 }}><span className="mv-muted">{l}</span><span style={{ textAlign: 'right', maxWidth: '65%', overflowWrap: 'anywhere' }}>{v}</span></div>
 
 // Действия над товаром. Цены и себестоимость — отдельным аудируемым эндпоинтом, остальное — PATCH.
@@ -120,7 +120,7 @@ export function OrdersSection({ role, cityId, cities, onNotify }: Props) {
           <input className="mv-input sm" style={{ width: 110, textAlign: 'right' }} type="text" inputMode="decimal" placeholder="€/шт" value={ap[i.id] ?? ''} onChange={e => setAp({ ...ap, [i.id]: e.target.value })} />
         </div>))}
         <button className="mv-btn" disabled={busy || !sel.order_items?.every((i: any) => ap[i.id] !== undefined && ap[i.id] !== '' && Number(String(ap[i.id]).replace(',', '.')) >= 0)} onClick={approve}>Назначить цены</button>
-      </div> : <div className="mv-card mv-sub" style={{ margin: '14px 0' }}>Крупный заказ (50+): итог назначает владелец. Подтвердить до согласования нельзя.</div>)
+      </div> : <div className="mv-card mv-sub" style={{ margin: '14px 0' }}>Крупный заказ (50+): итог назначает владелец. Подготовить и выдать до согласования нельзя.</div>)
         : <div className="mv-row mv-between" style={{ margin: '14px 0' }}><b style={{ fontSize: 18 }}>Итого</b><Price v={+sel.total} lg /></div>}
       <div className="mv-col">
         {(NEXT[sel.status] || []).map(s => <button key={s} disabled={busy} className={'mv-btn' + (s === 'cancelled' ? ' danger' : '')} onClick={() => setPending({ order: sel, to: s })}>{ACTION[s]}</button>)}

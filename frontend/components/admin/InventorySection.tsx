@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Notify, adminApi as api } from '@/lib/shared'
 import { Confirm, Empty, Icon, Loading, Sheet } from '../ui'
-import { CategoryChips, SearchField, countByCategory, matchText } from './Filters'
+import { BrandChips, CategoryChips, SearchField, brandOf, countByCategory, matchText } from './Filters'
 
 type Props = { role: 'owner' | 'city_admin'; cityId: string | null; cities: any[]; catalog: any; onNotify: Notify; onRefresh: () => void }
 type Status = 'all' | 'in' | 'low' | 'out'
@@ -15,7 +15,7 @@ const MODES: [Mode, string][] = [['view', 'Просмотр'], ['receipt', 'Пр
 export default function InventorySection({ role, cityId, cities, catalog, onNotify }: Props) {
   const [city, setCity] = useState<string>(role === 'city_admin' ? (cityId || '') : (cities[0]?.id || ''))
   const [rows, setRows] = useState<any[] | null>(null)
-  const [search, setSearch] = useState(''), [cat, setCat] = useState(''), [status, setStatus] = useState<Status>('all')
+  const [search, setSearch] = useState(''), [cat, setCat] = useState(''), [brand, setBrand] = useState(''), [status, setStatus] = useState<Status>('all')
   const [mode, setMode] = useState<Mode>('view'), [reason, setReason] = useState('')
   const [bulk, setBulk] = useState<Record<string, number>>({})
   const [confirmBulk, setConfirmBulk] = useState(false), [busy, setBusy] = useState(false)
@@ -67,10 +67,12 @@ export default function InventorySection({ role, cityId, cities, catalog, onNoti
 
   const all = rows || []
   const counts = countByCategory(all)
+  const brandCounts: Record<string, number> = {}
+  all.forEach(r => { const b = brandOf(r.product_name) || 'other'; brandCounts[b] = (brandCounts[b] || 0) + 1 })
   const statusOk = (r: any, s: Status) => s === 'all' || (s === 'in' ? r.available > 0 : s === 'out' ? r.available <= 0 : r.available > 0 && r.available <= 2)
   const statusCount: Record<Status, number> = { all: all.length, in: all.filter(r => statusOk(r, 'in')).length, low: all.filter(r => statusOk(r, 'low')).length, out: all.filter(r => statusOk(r, 'out')).length }
   const shown = all
-    .filter(r => (!cat || String(r.category_id) === cat) && statusOk(r, status) && matchText(search, r.product_name, r.variant_name, catName(r.category_id)))
+    .filter(r => (!cat || String(r.category_id) === cat) && (!brand || (brand === 'other' ? !brandOf(r.product_name) : brandOf(r.product_name) === brand)) && statusOk(r, status) && matchText(search, r.product_name, r.variant_name, catName(r.category_id)))
     .sort((a, b) => `${a.product_name}${a.variant_name || ''}`.localeCompare(`${b.product_name}${b.variant_name || ''}`))
 
   return (<>
@@ -84,6 +86,7 @@ export default function InventorySection({ role, cityId, cities, catalog, onNoti
     <div className="mv-toolbar"><div className="mv-col">
       <SearchField value={search} onChange={setSearch} placeholder="Товар или вкус, например «mint»" />
       <CategoryChips cats={cats} value={cat} onChange={setCat} counts={counts} allCount={all.length} />
+      <BrandChips value={brand} onChange={setBrand} counts={brandCounts} allCount={all.length} />
       <div className="mv-chips">{([['all', 'Все'], ['in', 'В наличии'], ['low', 'Мало'], ['out', 'Нет']] as [Status, string][]).map(([k, l]) =>
         <button key={k} className={'mv-pill' + (status === k ? ' on' : '')} onClick={() => setStatus(k)}>{l}<em>{statusCount[k]}</em></button>)}</div>
     </div></div>
@@ -94,7 +97,7 @@ export default function InventorySection({ role, cityId, cities, catalog, onNoti
       <InvRow key={row.inventory_id} row={row} mode={mode} busy={busy} bulkQty={bulk[row.inventory_id] ?? row.quantity}
         onBulk={q => setBulk(b => ({ ...b, [row.inventory_id]: q }))} onSave={q => save(row, q)} onHistory={() => openHistory(row)}
         onTransfer={role === 'owner' && other.length ? () => setTransfer({ row, to: other[0].id, qty: 1 }) : undefined} />))}</div>
-    {rows && !shown.length && <Empty icon={Icon.search(30)} title="Ничего не найдено" text={search || cat || status !== 'all' ? 'Измените фильтр или запрос' : undefined} />}
+    {rows && !shown.length && <Empty icon={Icon.search(30)} title="Ничего не найдено" text={search || cat || brand || status !== 'all' ? 'Измените фильтр или запрос' : undefined} />}
 
     {mode === 'bulk' && changes.length > 0 && <div className="mv-sticky"><button className="mv-btn" disabled={busy} onClick={() => setConfirmBulk(true)}>Сохранить изменения ({changes.length})</button></div>}
     {confirmBulk && <Confirm title={`Сохранить ${changes.length} изменений?`} text={`Остатки ${cityName} будут обновлены, каждое изменение попадёт в журнал.`} ok="Сохранить" onOk={saveBulk} onCancel={() => setConfirmBulk(false)} />}
