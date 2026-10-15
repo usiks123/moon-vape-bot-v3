@@ -1,16 +1,20 @@
 // Общие утилиты (UI-слой). Бизнес-логика живёт в backend и RPC Supabase.
 export const eur = (n: number) => (Number.isFinite(+n) ? +n : 0).toFixed(2).replace('.', ',') + ' €'
 
-// Статусы заказа (миграции 0002–0003): new → confirmed → prepared → issued → returned; cancelled из new/confirmed/prepared.
+// Статусы заказа (миграции 0002–0003): new → confirmed → prepared → issued; cancelled из new/confirmed/prepared.
 export const ST: Record<string, string> = {
-  new: 'Новый', confirmed: 'Подтверждён', prepared: 'Подготовлен', issued: 'Выдан', cancelled: 'Отменён', returned: 'Возвращён',
+  new: 'Новый', confirmed: 'Подтверждён', prepared: 'Подготовлен', issued: 'Выдан', cancelled: 'Отменён',
 }
 // Классы бейджей из globals.css: new / processing / completed / cancelled
 export const ST_CLASS: Record<string, string> = {
-  new: 'new', confirmed: 'processing', prepared: 'processing', issued: 'completed', cancelled: 'cancelled', returned: 'cancelled',
+  new: 'new', confirmed: 'processing', prepared: 'processing', issued: 'completed', cancelled: 'cancelled',
 }
 // Сообщения об ошибках из backend (detail) и RPC.
 export const ERR: Record<string, string> = {
+  no_reward: 'Бонуса пока нет: нужно, чтобы друг оформил и получил свой первый заказ',
+  not_subscribed_self: 'Подпишитесь на канал, чтобы получить бонус',
+  not_subscribed_friend: 'Друг ещё не подписан на канал — бонус ждёт',
+  referral_only_munich: 'Бонус за друга действует только для клиентов Мюнхена',
   insufficient_stock: 'Недостаточно товара в выбранном городе — обновите корзину',
   wholesale_manager: 'От 50 шт. — цена по договорённости с менеджером.',
   item_not_found: 'Товар больше недоступен',
@@ -20,7 +24,6 @@ export const ERR: Record<string, string> = {
   forbidden: 'Нет доступа',
   bad_city: 'Такого города нет',
   empty_order: 'Корзина пуста',
-  already_paid: 'Заказ уже отмечен оплаченным',
   bad_status: 'В этом статусе оплату отметить нельзя',
   bad_transition: 'Этот переход статуса недопустим',
   below_reserved: 'Остаток не может быть меньше резерва под заказы',

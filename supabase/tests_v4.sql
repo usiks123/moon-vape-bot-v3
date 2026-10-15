@@ -95,10 +95,8 @@ begin
   -- ---------------------------------------------------------------- ОПЛАТА: доплата
   r := create_order(u,'muenchen',jsonb_build_array(jsonb_build_object('inventory_id',em,'quantity',2)),'@e','','ek-2');
   oid2 := (r->>'id')::uuid;
-  perform mark_order_paid(oid2, OWNER);
-  r := customer_edit_order(u, oid2, jsonb_build_array(jsonb_build_object('inventory_id',em,'quantity',9)), 'ek-paid');
-  assert (r->>'balance')::numeric = 69, 'paid 30, new 99 → доплата 69, got '||(r->>'balance');
-  select paid_amount into bal from orders where id=oid2; assert bal=30, 'paid amount must not change';
+  r := customer_edit_order(u, oid2, jsonb_build_array(jsonb_build_object('inventory_id',em,'quantity',9)), 'ek-unpaid');
+  assert r->>'balance' is null, 'unpaid order has no balance before issue';
 
   -- ---------------------------------------------------------------- СОГЛАСОВАНИЕ 50+
   perform admin_set_stock(OWNER, em, 80, 'receipt', 'для 50+');

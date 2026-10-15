@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { Notify, adminApi as api } from '@/lib/shared'
 import { Confirm } from '../ui'
+import { CategoryChips, SearchField, countByCategory, matchProduct } from './Filters'
 
 type Props = { role: 'owner' | 'city_admin'; cityId: string | null; cities: any[]; catalog: any; onNotify: Notify }
 type Mode = 'products' | 'categories' | 'new'
@@ -17,10 +18,16 @@ export default function BroadcastSection({ role, cityId, cities, catalog, onNoti
   const [key, setKey] = useState(() => crypto.randomUUID())
   const [busy, setBusy] = useState(false), [confirm, setConfirm] = useState(false)
   const [result, setResult] = useState<any>(null)
+  const [search, setSearch] = useState(''), [cat, setCat] = useState('')
 
   const products = (catalog?.products || []).filter((p: any) => p.active)
   const cats = catalog?.categories || []
   const cityName = cities.find(c => c.id === city)?.name || ''
+  const catName = (id: number) => cats.find((c: any) => c.id === id)?.name || ''
+  const counts = countByCategory(products)
+  const shownProducts = products
+    .map((p: any) => ({ p, m: matchProduct(p, catName(p.category_id), search) }))
+    .filter(x => x.m.ok && (!cat || String(x.p.category_id) === cat))
 
   const changeMode = (m: Mode) => { setMode(m); setPick([]); setPreview(null) }
   const togglePick = (id: string) => { setPick(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]); setPreview(null) }
@@ -56,8 +63,13 @@ export default function BroadcastSection({ role, cityId, cities, catalog, onNoti
       <button key={k} className={mode === k ? 'on' : ''} onClick={() => changeMode(k)}>{l}</button>)}</div>
 
     {mode === 'new' && <div className="mv-sub" style={{ marginBottom: 12 }}>Товары, поступившие в {cityName} после последней рассылки этого города (или за 7 дней).</div>}
-    {mode === 'products' && <div className="mv-flavors" style={{ maxHeight: 240, overflowY: 'auto', marginBottom: 12 }}>{products.map((p: any) =>
-      <button key={p.id} className={'mv-chip' + (pick.includes(p.id) ? ' on' : '')} onClick={() => togglePick(p.id)}><span>{p.name}</span></button>)}</div>}
+    {mode === 'products' && <div className="mv-col" style={{ marginBottom: 12 }}>
+      <SearchField value={search} onChange={setSearch} placeholder="Товар или вкус…" />
+      <CategoryChips cats={cats} value={cat} onChange={setCat} counts={counts} allCount={products.length} />
+      <div className="mv-col" style={{ gap: 6, maxHeight: 360, overflowY: 'auto' }}>{shownProducts.map(({ p, m }: any) =>
+        <button key={p.id} className={'mv-chip mv-tap' + (pick.includes(p.id) ? ' on' : '')} onClick={() => togglePick(p.id)}>
+          <span>{p.name}{m.flavors.length ? ` · ${m.flavors.slice(0, 2).join(', ')}` : ''}</span>{pick.includes(p.id) && <b>✓</b>}</button>)}</div>
+    </div>}
     {mode === 'categories' && <div className="mv-flavors" style={{ marginBottom: 12 }}>{cats.map((c: any) =>
       <button key={c.id} className={'mv-chip' + (pick.includes(String(c.id)) ? ' on' : '')} onClick={() => togglePick(String(c.id))}><span>{c.name}</span></button>)}</div>}
 

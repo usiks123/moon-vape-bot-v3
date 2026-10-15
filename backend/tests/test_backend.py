@@ -191,7 +191,7 @@ def test_order_text_escapes_html():
 def test_order_keyboard_matches_status():
     o = {"id": "44444444-4444-4444-4444-444444444444", "status": "new", "paid_at": None}
     cbs = [b.callback_data for row in main.order_kb(o).inline_keyboard for b in row]
-    assert "st:44444444-4444-4444-4444-444444444444:confirmed" in cbs and any(c.startswith("pd:") for c in cbs)
+    assert "st:44444444-4444-4444-4444-444444444444:confirmed" in cbs and not any(c.startswith("pd:") for c in cbs)
     assert main.order_kb({"id": "x", "status": "cancelled", "paid_at": None}) is None
 
 def test_deliver_claims_row_before_sending(fake, monkeypatch):

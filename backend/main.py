@@ -27,24 +27,22 @@ H = {"apikey": KEY, "Authorization": f"Bearer {KEY}", "Content-Type": "applicati
 http = httpx.AsyncClient(timeout=20)
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 router = Router(); dp = Dispatcher(); dp.include_router(router)
-STATUS = {"new": "Новый", "confirmed": "Подтверждён", "prepared": "Подготовлен", "issued": "Выдан", "cancelled": "Отменён", "returned": "Возвращён"}
+STATUS = {"new": "Новый", "confirmed": "Подтверждён", "prepared": "Подготовлен", "issued": "Выдан", "cancelled": "Отменён"}
 CUSTOMER_MSG = {
     "new": "Заказ #{n} создан. Ожидайте подтверждения.",
     "confirmed": "Заказ #{n} подтверждён.",
     "prepared": "Заказ #{n} подготовлен.",
     "issued": "Заказ #{n} выдан. Спасибо за покупку!",
     "cancelled": "Заказ #{n} отменён.",
-    "returned": "Оформлен возврат по заказу #{n}.",
 }
 # Какие кнопки видит администратор для каждого статуса (переходы дополнительно проверяет БД).
 ADMIN_ACTIONS = {
     "new": [("✅ Подтвердить", "confirmed"), ("❌ Отменить", "cancelled")],
     "confirmed": [("📦 Подготовлен", "prepared"), ("❌ Отменить", "cancelled")],
     "prepared": [("🤝 Выдан", "issued"), ("❌ Отменить", "cancelled")],
-    "issued": [("↩️ Возврат", "returned")],
 }
 RPC_ERR = {
-    "forbidden": "Нет доступа", "bad_transition": "Этот переход статуса недопустим", "already_paid": "Заказ уже отмечен оплаченным",
+    "forbidden": "Нет доступа", "no_reward": "Бонуса пока нет", "not_subscribed_self": "Подпишитесь на канал, чтобы получить бонус", "not_subscribed_friend": "Друг ещё не подписан на канал — бонус ждёт", "bad_transition": "Этот переход статуса недопустим",
     "bad_status": "В этом статусе оплату отметить нельзя", "order_not_found": "Заказ не найден",
     "below_reserved": "Нельзя установить остаток меньше резерва", "exceeds_balance": "Сумма больше задолженности",
 }
@@ -157,8 +155,6 @@ def order_kb(o) -> Optional[InlineKeyboardMarkup]:
     rows = []
     btns = [InlineKeyboardButton(text=t, callback_data=f"st:{o['id']}:{s}") for t, s in ADMIN_ACTIONS.get(o["status"], [])]
     if btns: rows.append(btns)
-    if o["status"] not in ("cancelled", "returned") and not o.get("paid_at"):
-        rows.append([InlineKeyboardButton(text="💶 Отметить оплаченным", callback_data=f"pd:{o['id']}")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 # ----------------------------------------------------------------- Очередь уведомлений
@@ -263,7 +259,7 @@ class TransferIn(BaseModel):
     from_inventory_id: UUID; to_inventory_id: UUID; quantity: int = Field(gt=0, le=100000); reason: str = Field("", max_length=200)
 
 class StatusIn(BaseModel):
-    status: Literal["confirmed", "prepared", "issued", "cancelled", "returned"]
+    status: Literal["confirmed", "prepared", "issued", "cancelled"]
 
 class SettlementIn(BaseModel):
     city_id: str = Field(min_length=2, max_length=40)
@@ -279,6 +275,7 @@ class ProductPatch(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200); description: Optional[str] = Field(None, max_length=2000)
     category_id: Optional[int] = None
     active: Optional[bool] = None; image_path: Optional[str] = Field(None, max_length=300)
+    referral_excluded: Optional[bool] = None
 
 class PricesIn(BaseModel):
     price: Optional[float] = Field(None, ge=0, le=100000)
@@ -320,12 +317,21 @@ class BroadcastIn(BaseModel):
 
 @router.message(CommandStart())
 async def start(m: Message):
+    # Реферальная ссылка засчитывается только если пользователя ещё нет в базе (новый клиент).
+    ref = _ref_from(m.text)
+    is_new = False
+    if ref:
+        try: is_new = not await db("GET", "users", params={"telegram_id": f"eq.{m.from_user.id}", "select": "telegram_id"})
+        except Exception: log.warning("referral: user check failed")
     # Фиксируем, что бот может писать пользователю (для рассылок).
     try:
         await db("POST", "users?on_conflict=telegram_id", prefer="resolution=merge-duplicates,return=minimal", json={
             "telegram_id": m.from_user.id, "username": m.from_user.username, "first_name": m.from_user.first_name,
             "bot_started_at": now_iso(), "bot_blocked": False})
     except Exception: log.warning("could not record bot start")
+    if ref and is_new:
+        try: await rpc("referral_register", {"p_referrer": ref, "p_referred": m.from_user.id})
+        except Exception: log.warning("referral: register failed")
     await m.answer("Добро пожаловать в <b>MoonVape</b>!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Открыть магазин", web_app=WebAppInfo(url=WEBAPP))]]))
 
@@ -337,7 +343,7 @@ async def _refresh_card(c: CallbackQuery, oid: str):
 @router.callback_query(F.data.startswith("st:"))
 async def on_status(c: CallbackQuery):
     parts = (c.data or "").split(":")
-    if len(parts) != 3 or parts[2] not in ("confirmed", "prepared", "issued", "cancelled", "returned"):
+    if len(parts) != 3 or parts[2] not in ("confirmed", "prepared", "issued", "cancelled"):
         return await c.answer("Некорректная команда", show_alert=True)
     oid, st = parts[1], parts[2]
     try: await rpc("change_order_status", {"p_order": oid, "p_new": st, "p_actor": c.from_user.id})
@@ -346,14 +352,6 @@ async def on_status(c: CallbackQuery):
     bg(deliver_pending())
     await _refresh_card(c, oid)
     await c.answer("Статус обновлён")
-
-@router.callback_query(F.data.startswith("pd:"))
-async def on_paid(c: CallbackQuery):
-    oid = (c.data or "").split(":")[1] if ":" in (c.data or "") else ""
-    try: await rpc("mark_order_paid", {"p_order": oid, "p_actor": c.from_user.id})
-    except HTTPException as ex: return await c.answer(RPC_ERR.get(str(ex.detail), "Ошибка"), show_alert=True)
-    await _refresh_card(c, oid)
-    await c.answer("Оплата отмечена")
 
 @asynccontextmanager
 async def lifespan(app):
@@ -408,6 +406,71 @@ async def catalog(q: str = "", u=Depends(current_user)):
 async def pricing_preview(b: OrderPreviewIn, u=Depends(current_user)):
     if not u.get("city_id"): raise HTTPException(409, "city_required")
     return await rpc("pricing_preview", {"p_city": u["city_id"], "p_items": [{"inventory_id": str(i.inventory_id), "quantity": i.quantity} for i in b.items]})
+
+# ----------------------------------------------------------------- Рефералы (только Мюнхен)
+REFERRAL_CITY = "muenchen"
+CHANNEL_ID = int(os.environ.get("REFERRAL_CHANNEL_ID", "-1003727349034"))
+CHANNEL_LINK = os.environ.get("REFERRAL_CHANNEL_LINK", "")
+_bot_username: Optional[str] = None
+
+def _ref_from(text: Optional[str]) -> Optional[int]:
+    m = re.search(r"ref_(\d+)", text or "")
+    return int(m.group(1)) if m else None
+
+async def bot_username() -> str:
+    global _bot_username
+    if not _bot_username: _bot_username = (await bot.get_me()).username
+    return _bot_username
+
+async def is_subscribed(tg: int) -> bool:
+    """Подписка на канал через Telegram. Бот должен быть администратором канала."""
+    try:
+        m = await bot.get_chat_member(CHANNEL_ID, tg)
+        return m.status in ("member", "administrator", "creator")
+    except Exception:
+        log.warning("referral: subscription check failed")
+        return False
+
+@app.get("/api/referral")
+async def referral_info(u=Depends(current_user)):
+    tg = u["telegram_id"]
+    rows = await db("GET", "referrals", params={"referrer_tg": f"eq.{tg}", "order": "created_at.desc",
+                                                 "select": "status,created_at,eligible_at,redeemed_at"}) or []
+    ready = any(r["status"] == "eligible" for r in rows)
+    return {"link": f"https://t.me/{await bot_username()}?start=ref_{tg}",
+            "is_munich": u.get("city_id") == REFERRAL_CITY,
+            "channel_link": CHANNEL_LINK or None,
+            "invited": rows,
+            "reward_ready": ready,
+            "subscribed": (await is_subscribed(tg)) if ready else None}
+
+@app.get("/api/referral/options")
+async def referral_options(u=Depends(current_user)):
+    if u.get("city_id") != REFERRAL_CITY: return []
+    return await rpc("referral_options", {"p_city": REFERRAL_CITY}) or []
+
+class RedeemReferralIn(BaseModel):
+    inventory_id: UUID
+    idempotency_key: str = Field(..., min_length=8, max_length=80)
+
+@app.post("/api/referral/redeem")
+async def referral_redeem(b: RedeemReferralIn, u=Depends(current_user)):
+    if u.get("city_id") != REFERRAL_CITY: raise HTTPException(409, "referral_only_munich")
+    tg = u["telegram_id"]
+    rows = await db("GET", "referrals", params={"referrer_tg": f"eq.{tg}", "status": "eq.eligible",
+                                                 "order": "eligible_at.asc", "limit": "1", "select": "referred_tg"}) or []
+    if not rows: raise HTTPException(409, "no_reward")
+    if not await is_subscribed(tg): raise HTTPException(403, "not_subscribed_self")
+    if not await is_subscribed(rows[0]["referred_tg"]): raise HTTPException(403, "not_subscribed_friend")
+    res = await rpc("redeem_referral", {"p_referrer": tg, "p_inventory": str(b.inventory_id), "p_key": f"ref:{tg}:{b.idempotency_key}"})
+    if not res.get("duplicate"): bg(_after_order(res["id"]))
+    return res
+
+@app.get("/api/admin/referrals")
+async def admin_referrals(city: Optional[str] = None, ctx=Depends(admin_ctx)):
+    c = scope_city(ctx, city)
+    if not c: raise HTTPException(400, "city_required")
+    return await rpc("admin_referrals", {"p_actor": ctx["telegram_id"], "p_city": c})
 
 @app.get("/api/cart")
 async def get_cart(u=Depends(current_user)): return await rpc("get_cart", {"p_user": u["id"]}) or []
@@ -558,10 +621,6 @@ async def admin_approve_prices(order_id: UUID, b: ApprovalIn, ctx=Depends(admin_
                     "text": f"Заказ #{o['number']}: цена по крупному заказу согласована. Итог: {eur(res.get('total'))}."}])
     bg(deliver_pending())
     return res
-
-@app.post("/api/admin/orders/{order_id}/paid")
-async def admin_mark_paid(order_id: UUID, ctx=Depends(admin_ctx)):
-    return await rpc("mark_order_paid", {"p_order": str(order_id), "p_actor": ctx["telegram_id"]})
 
 # ----------------------------------------------------------------- Админ: взаиморасчёты
 

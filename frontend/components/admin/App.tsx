@@ -7,13 +7,14 @@ import InventorySection from './InventorySection'
 import { CategoriesSection, OrdersSection, PricesSection, ProductsSection } from './AdminSections'
 import SettlementSection from './SettlementSection'
 import BroadcastSection from './BroadcastSection'
+import ReferralsSection from './ReferralsSection'
 
 type Role = 'owner' | 'city_admin'
 
 // Разделы зависят от роли. Это только интерфейс: права всё равно проверяет backend и RPC.
 function moreItems(role: Role): [string, string, any][] {
   // «Оптовые цены» видны всем админам; редактирование внутри — только владельцу (ProductSheet).
-  const base: [string, string, any][] = [['products', 'Товары', Icon.tag], ['prices', 'Оптовые цены', Icon.euro], ['settlement', 'Взаиморасчёты', Icon.euro], ['broadcast', 'Оповещение о наличии', Icon.chat]]
+  const base: [string, string, any][] = [['products', 'Товары', Icon.tag], ['prices', 'Оптовые цены', Icon.euro], ['settlement', 'Взаиморасчёты', Icon.euro], ['broadcast', 'Оповещение о наличии', Icon.chat], ['referrals', 'Рефералы (Мюнхен)', Icon.chat]]
   return role === 'owner' ? [...base, ['categories', 'Категории', Icon.grid]] : base
 }
 
@@ -28,6 +29,7 @@ export default function AdminApp({ role, cityId }: { role: Role; cityId: string 
   const notify: Notify = (text, kind = 'ok') => { setToast({ kind, text }); haptic(kind === 'ok' ? 'success' : 'error') }
   const load = () => Promise.all([api('/api/admin/cities'), api('/api/admin/catalog')]).then(([c, k]) => { setCities(c); setCatalog(k); setLoadErr('') })
   useEffect(() => { load().catch(e => setLoadErr(e.message)).finally(() => setLoading(false)) }, [])
+  // Тихое обновление каталога: экран не перерисовывается целиком, открытые шторки сохраняют ввод.
   const refresh = () => { api('/api/admin/catalog').then(setCatalog).catch(e => notify('Не удалось обновить каталог: ' + e.message, 'err')) }
   const go = (k: string) => { setSection(k); setMore(false); window.scrollTo({ top: 0 }) }
 
@@ -42,7 +44,7 @@ export default function AdminApp({ role, cityId }: { role: Role; cityId: string 
   return (
     <div className="mv-app">
       {toast && <Toast kind={toast.kind} text={toast.text} onDone={() => setToast(null)} />}
-      <Header left={<div className="mv-logo"><Moon />Moon<b>Vape</b><span className="mv-badge new" style={{ marginLeft: 4 }}>{role === 'owner' ? 'Владелец' : cityName}</span></div>} onProfile={() => (window as any).Telegram?.WebApp?.close?.()} />
+      <Header left={<div className="mv-logo"><Moon />Moon<b>Vape</b><span className="mv-badge new" style={{ marginLeft: 4 }}>{role === 'owner' ? 'Владелец' : cityName}</span></div>} />
       <div className="mv-page" key={section}>
         {section === 'dashboard' && <Dashboard {...shared} />}
         {section === 'orders' && <OrdersSection {...shared} />}
@@ -52,10 +54,11 @@ export default function AdminApp({ role, cityId }: { role: Role; cityId: string 
         {section === 'categories' && role === 'owner' && <CategoriesSection {...shared} />}
         {section === 'settlement' && <SettlementSection {...shared} />}
         {section === 'broadcast' && <BroadcastSection {...shared} />}
+        {section === 'referrals' && <ReferralsSection {...shared} />}
       </div>
       {more && <Sheet onClose={() => setMore(false)}>
         <h3 style={{ margin: '16px 0 12px', fontWeight: 800 }}>Разделы</h3>
-        <div className="mv-col" style={{ paddingBottom: 8 }}>{more_.map(([k, l, ic]) => <button key={k} className="mv-card tap mv-row" onClick={() => go(k)}><span className="mv-accent">{ic(22)}</span><b>{l}</b></button>)}</div>
+        <div className="mv-col" style={{ paddingBottom: 8 }}>{more_.map(([k, l, ic]) => <button key={k} className="mv-card tap mv-row mv-tap" onClick={() => go(k)}><span className="mv-accent">{ic(22)}</span><b>{l}</b></button>)}</div>
       </Sheet>}
       <BottomNav active={more_.some(m => m[0] === section) ? 'more' : section} onSelect={k => k === 'more' ? setMore(true) : go(k)} items={[
         { key: 'dashboard', label: 'Обзор', icon: Icon.home(22) },
