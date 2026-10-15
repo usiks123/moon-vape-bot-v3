@@ -85,9 +85,8 @@ begin
   select count(*) into cnt from order_edits where order_id=oid and kind='customer_edit'; assert cnt=2, 'two edit rows';
 
   -- ---------------------------------------------------------------- СТАТУСЫ РЕДАКТИРОВАНИЯ
-  perform change_order_status(oid,'confirmed',OWNER);
   r := customer_edit_order(u, oid, jsonb_build_array(jsonb_build_object('inventory_id',em,'quantity',3)), 'ek-conf');
-  assert (r->>'total')::numeric = 42, 'editable in confirmed (=В обработке): 3x14=42';
+  assert (r->>'total')::numeric = 42, 'editable in new: 3x14=42';
   perform change_order_status(oid,'prepared',OWNER);
   perform pg_temp.fails(format('select customer_edit_order(%L,%L,%L::jsonb,%L)', u, oid,
     jsonb_build_array(jsonb_build_object('inventory_id',em,'quantity',1))::text, 'ek-prep'), 'edit_not_allowed');
@@ -103,7 +102,7 @@ begin
   r := create_order(u,'muenchen',jsonb_build_array(jsonb_build_object('inventory_id',em,'quantity',50)),'@e','','ek-50');
   oid3 := (r->>'id')::uuid;
   assert (r->>'approval_required')::boolean, '50 creates approval order';
-  perform pg_temp.fails(format('select change_order_status(%L,''confirmed'',%s)', oid3, OWNER), 'approval_required');
+  perform pg_temp.fails(format('select change_order_status(%L,''prepared'',%s)', oid3, OWNER), 'approval_required');
   perform pg_temp.fails(format('select approve_order_prices(%L,%s,%L::jsonb)', oid3, HANN,
     jsonb_build_array(jsonb_build_object('order_item_id',(select id from order_items where order_id=oid3),'unit_price',12))::text), 'forbidden');
   select id into oi from order_items where order_id=oid3;
@@ -111,7 +110,7 @@ begin
   perform approve_order_prices(oid3, OWNER, jsonb_build_array(jsonb_build_object('order_item_id',oi,'unit_price',12)));
   select total into tot from orders where id=oid3; assert tot=600, 'approved total 50x12=600, got '||tot;
   assert not (select approval_required from orders where id=oid3), 'approval flag cleared';
-  perform change_order_status(oid3,'confirmed',OWNER);
+  perform change_order_status(oid3,'prepared',OWNER);
   perform change_order_status(oid3,'cancelled',OWNER);
 
   -- ---------------------------------------------------------------- ПРАВА ВЛАДЕЛЬЦА/АДМИНА

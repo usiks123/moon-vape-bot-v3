@@ -8,6 +8,7 @@ import { CategoriesSection, OrdersSection, PricesSection, ProductsSection } from
 import SettlementSection from './SettlementSection'
 import BroadcastSection from './BroadcastSection'
 import ReferralsSection from './ReferralsSection'
+import CitiesSection from './CitiesSection'
 
 type Role = 'owner' | 'city_admin'
 
@@ -15,7 +16,7 @@ type Role = 'owner' | 'city_admin'
 function moreItems(role: Role): [string, string, any][] {
   // «Оптовые цены» видны всем админам; редактирование внутри — только владельцу (ProductSheet).
   const base: [string, string, any][] = [['products', 'Товары', Icon.tag], ['prices', 'Оптовые цены', Icon.euro], ['settlement', 'Взаиморасчёты', Icon.euro], ['broadcast', 'Оповещение о наличии', Icon.chat], ['referrals', 'Рефералы (Мюнхен)', Icon.chat]]
-  return role === 'owner' ? [...base, ['categories', 'Категории', Icon.grid]] : base
+  return role === 'owner' ? [...base, ['categories', 'Категории', Icon.grid], ['cities', 'Города и каналы', Icon.chat]] : base
 }
 
 export default function AdminApp({ role, cityId }: { role: Role; cityId: string | null }) {
@@ -30,6 +31,7 @@ export default function AdminApp({ role, cityId }: { role: Role; cityId: string 
   const load = () => Promise.all([api('/api/admin/cities'), api('/api/admin/catalog')]).then(([c, k]) => { setCities(c); setCatalog(k); setLoadErr('') })
   useEffect(() => { load().catch(e => setLoadErr(e.message)).finally(() => setLoading(false)) }, [])
   // Тихое обновление каталога: экран не перерисовывается целиком, открытые шторки сохраняют ввод.
+  const reloadCities = () => { api('/api/admin/cities').then(setCities).catch(e => notify('Не удалось обновить города: ' + e.message, 'err')) }
   const refresh = () => { api('/api/admin/catalog').then(setCatalog).catch(e => notify('Не удалось обновить каталог: ' + e.message, 'err')) }
   const go = (k: string) => { setSection(k); setMore(false); window.scrollTo({ top: 0 }) }
 
@@ -55,6 +57,7 @@ export default function AdminApp({ role, cityId }: { role: Role; cityId: string 
         {section === 'settlement' && <SettlementSection {...shared} />}
         {section === 'broadcast' && <BroadcastSection {...shared} />}
         {section === 'referrals' && <ReferralsSection {...shared} />}
+        {section === 'cities' && role === 'owner' && <CitiesSection cities={cities} onNotify={notify} onRefresh={reloadCities} />}
       </div>
       {more && <Sheet onClose={() => setMore(false)}>
         <h3 style={{ margin: '16px 0 12px', fontWeight: 800 }}>Разделы</h3>

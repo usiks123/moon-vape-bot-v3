@@ -14,8 +14,8 @@ async function api(path: string, opt: any = {}) {
 
 // Текст из ТЗ, раздел 3 — показываем при первом входе, пока город не выбран.
 const CITY_PROMPT = 'Выберите город, в котором вы хотите посмотреть доступные товары. Изменить город можно будет в любой момент в профиле или на странице товара.'
-const FLOW = ['new', 'confirmed', 'prepared', 'issued']
-const FLOW_LABEL: Record<string, string> = { new: 'Создан', confirmed: 'Подтверждён', prepared: 'Подготовлен', issued: 'Выдан' }
+const FLOW = ['new', 'prepared', 'issued']
+const FLOW_LABEL: Record<string, string> = { new: 'Создан', prepared: 'Подготовлен', issued: 'Выдан' }
 
 // Строки корзины: позиции другого города сохраняются (не переносятся молча), текущего — только если есть в наличии.
 function keepLines(c: any, qty: Record<string, number>, meta: Record<string, string>, cityId: string) {
@@ -156,7 +156,7 @@ export default function CustomerApp() {
 
   const user = me?.user || {}
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Покупатель'
-  const active = (orders || []).filter(o => ['new', 'confirmed', 'prepared'].includes(o.status))
+  const active = (orders || []).filter(o => ['new', 'prepared'].includes(o.status))
   const history = (orders || []).filter(o => ['issued', 'cancelled'].includes(o.status))
   const orderCard = (o: any) => (
     <button key={o.id} className="mv-card tap mv-row mv-between" onClick={() => open(o.id)}>
@@ -382,7 +382,7 @@ function OrderEditor({ order, catalog, onClose, onSaved }: any) {
 
 // Приведи друга: ссылка, статусы и выбор бонусной жидкости (только Мюнхен).
 function ReferralCard({ fail, done }: { fail: (m: string) => void; done: (m: string) => void }) {
-  const [info, setInfo] = useState<any>(null), [opts, setOpts] = useState<any[]>([]), [pick, setPick] = useState(''), [busy, setBusy] = useState(false)
+  const [info, setInfo] = useState<any>(null), [opts, setOpts] = useState<any[]>([]), [pick, setPick] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState('')
   const load = async () => {
     try {
       const r = await api('/api/referral'); setInfo(r)
@@ -392,6 +392,9 @@ function ReferralCard({ fail, done }: { fail: (m: string) => void; done: (m: str
   useEffect(() => { load() }, [])
   if (!info) return null
   const cnt = (st: string) => info.invited.filter((r: any) => r.status === st).length
+  const qn = q.trim().toLowerCase()
+  const shownOpts = opts.filter(o => !qn || `${o.name} ${o.variant || ''}`.toLowerCase().includes(qn))
+  const pickName = opts.find(o => o.inventory_id === pick)?.name
   const copy = async () => {
     try { await navigator.clipboard.writeText(info.link); done('Ссылка скопирована') }
     catch { fail('Не удалось скопировать. Выделите ссылку и скопируйте вручную') }
@@ -401,28 +404,41 @@ function ReferralCard({ fail, done }: { fail: (m: string) => void; done: (m: str
     setBusy(true)
     try {
       await api('/api/referral/redeem', { method: 'POST', body: JSON.stringify({ inventory_id: pick, idempotency_key: crypto.randomUUID() }) })
-      done('Бонус оформлен: заказ создан, он бесплатный'); setPick(''); await load()
+      done('Бонус оформлен: заказ создан, он бесплатный'); setPick(''); setQ(''); await load()
     } catch (e: any) { fail(e.message) } finally { setBusy(false) }
   }
   return (<div className="mv-card" style={{ marginTop: 12 }}>
     <div style={{ fontWeight: 800, marginBottom: 4 }}>Приведи друга — жидкость бесплатно</div>
     {!info.is_munich ? <div className="mv-sub">Акция действует только для клиентов Мюнхена.</div> : <>
-      <div className="mv-sub" style={{ marginBottom: 10 }}>Бонус получаете вы, когда друг впервые заказывает и получает заказ. Заказ не только из картриджей и Elfbar 2000. Вы и друг должны быть подписаны на канал.</div>
+      <div className="mv-sub" style={{ marginBottom: 10 }}>Бонус получаете вы, когда друг впервые заказывает у нас и получает заказ. Заказ должен быть сделан из категорий Жидкости, Pod-системы, Снюс, Одноразки (исключение: Elf Bar 2K), но не из картриджей и Elf Bar 2000. Бонус: одна жидкость Elfliq или Vozol бесплатно. Вы и друг должны быть подписаны на канал.</div>
+            <div className="mv-sub" style={{ marginBottom: 4 }}>Бот: ссылка для друга</div>
       <div className="mv-row" style={{ gap: 8 }}>
         <input className="mv-input sm" readOnly value={info.link} onFocus={e => e.target.select()} style={{ flex: 1, minWidth: 0 }} />
         <button className="mv-btn sm" style={{ width: 'auto' }} onClick={copy}>Копировать</button>
       </div>
+      {info.channel_link && <>
+        <div className="mv-sub" style={{ margin: '12px 0 4px' }}>Канал: подписка обязательна</div>
+        <a className="mv-btn ghost sm" style={{ width: 'auto', display: 'inline-flex', alignItems: 'center' }} href={info.channel_link} target="_blank" rel="noreferrer">Открыть канал</a>
+      </>}
       <div className="mv-sub" style={{ marginTop: 10 }}>Приглашено: {info.invited.length} · ждут покупки друга: {cnt('pending')} · бонус готов: {cnt('eligible')} · получено: {cnt('redeemed')}</div>
       {info.reward_ready && !info.subscribed && <div className="mv-note" style={{ marginTop: 10 }}>
         Бонус готов. Подпишитесь на канал, чтобы его получить.{' '}
         {info.channel_link && <a href={info.channel_link} target="_blank" rel="noreferrer">Открыть канал</a>}{' '}
         <button className="mv-link" onClick={load}>Проверить</button></div>}
       {info.reward_ready && info.subscribed && <div className="mv-col" style={{ marginTop: 10 }}>
-        <select className="mv-input" value={pick} onChange={e => setPick(e.target.value)}>
-          <option value="">Выберите жидкость</option>
-          {opts.map((o: any) => <option key={o.inventory_id} value={o.inventory_id}>{o.name}{o.variant ? ' · ' + o.variant : ''} (есть {o.available})</option>)}
-        </select>
-        <button className="mv-btn" disabled={!pick || busy} onClick={redeem}>Получить бесплатно</button>
+        <div className="mv-sub">Выберите жидкость Elfliq или Vozol:</div>
+        <input className="mv-input" placeholder="Поиск по названию или вкусу" value={q} onChange={e => setQ(e.target.value)} />
+        <div className="mv-col" style={{ gap: 6, maxHeight: 320, overflowY: 'auto' }}>
+          {shownOpts.map((o: any) => {
+            const on = pick === o.inventory_id
+            return (<button key={o.inventory_id} className="mv-card tap mv-row mv-between mv-tap" style={{ padding: 12, borderColor: on ? 'var(--accent)' : undefined }} onClick={() => setPick(o.inventory_id)}>
+              <div className="mv-grow" style={{ minWidth: 0 }}><b className="mv-trunc" style={{ display: 'block' }}>{o.name}</b>{o.variant && <div className="mv-sub mv-trunc">{o.variant}</div>}</div>
+              <span className="mv-sub" style={{ flexShrink: 0 }}>{on ? 'выбрано' : `есть ${o.available}`}</span>
+            </button>)
+          })}
+          {!shownOpts.length && <div className="mv-sub">Ничего не найдено</div>}
+        </div>
+        <button className="mv-btn" disabled={!pick || busy} onClick={redeem}>{pickName ? `Получить бесплатно: ${pickName}` : 'Выберите жидкость из списка'}</button>
       </div>}
     </>}
   </div>)

@@ -27,18 +27,16 @@ H = {"apikey": KEY, "Authorization": f"Bearer {KEY}", "Content-Type": "applicati
 http = httpx.AsyncClient(timeout=20)
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 router = Router(); dp = Dispatcher(); dp.include_router(router)
-STATUS = {"new": "Новый", "confirmed": "Подтверждён", "prepared": "Подготовлен", "issued": "Выдан", "cancelled": "Отменён"}
+STATUS = {"new": "Новый", "prepared": "Подготовлен", "issued": "Выдан", "cancelled": "Отменён"}
 CUSTOMER_MSG = {
     "new": "Заказ #{n} создан. Ожидайте подтверждения.",
-    "confirmed": "Заказ #{n} подтверждён.",
     "prepared": "Заказ #{n} подготовлен.",
     "issued": "Заказ #{n} выдан. Спасибо за покупку!",
     "cancelled": "Заказ #{n} отменён.",
 }
 # Какие кнопки видит администратор для каждого статуса (переходы дополнительно проверяет БД).
 ADMIN_ACTIONS = {
-    "new": [("✅ Подтвердить", "confirmed"), ("❌ Отменить", "cancelled")],
-    "confirmed": [("📦 Подготовлен", "prepared"), ("❌ Отменить", "cancelled")],
+    "new": [("📦 Подготовлен", "prepared"), ("❌ Отменить", "cancelled")],
     "prepared": [("🤝 Выдан", "issued"), ("❌ Отменить", "cancelled")],
 }
 RPC_ERR = {
@@ -259,7 +257,7 @@ class TransferIn(BaseModel):
     from_inventory_id: UUID; to_inventory_id: UUID; quantity: int = Field(gt=0, le=100000); reason: str = Field("", max_length=200)
 
 class StatusIn(BaseModel):
-    status: Literal["confirmed", "prepared", "issued", "cancelled"]
+    status: Literal["prepared", "issued", "cancelled"]
 
 class SettlementIn(BaseModel):
     city_id: str = Field(min_length=2, max_length=40)
@@ -332,8 +330,19 @@ async def start(m: Message):
     if ref and is_new:
         try: await rpc("referral_register", {"p_referrer": ref, "p_referred": m.from_user.id})
         except Exception: log.warning("referral: register failed")
-    await m.answer("Добро пожаловать в <b>MoonVape</b>!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Открыть магазин", web_app=WebAppInfo(url=WEBAPP))]]))
+    rows = [[InlineKeyboardButton(text="Открыть магазин", web_app=WebAppInfo(url=WEBAPP))]]
+    try:
+        chans = await db("GET", "cities", params={"select": "id,name,channel_link", "channel_link": "not.is.null", "order": "sort.asc"}) or []
+    except Exception:
+        chans = []
+    for c in chans:
+        rows.append([InlineKeyboardButton(text=f"Канал {c['name']}", url=c["channel_link"])])
+    text = "Добро пожаловать в <b>MoonVape</b>!"
+    if chans:
+        text += "\n\nПодпишитесь на канал вашего города: новости и наличие."
+        if any(c["id"] == REFERRAL_CITY for c in chans):
+            text += "\nМюнхен: для акции «Приведи друга» подписка на канал обязательна."
+    await m.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 async def _refresh_card(c: CallbackQuery, oid: str):
     o = await fetch_order(oid)
@@ -343,7 +352,7 @@ async def _refresh_card(c: CallbackQuery, oid: str):
 @router.callback_query(F.data.startswith("st:"))
 async def on_status(c: CallbackQuery):
     parts = (c.data or "").split(":")
-    if len(parts) != 3 or parts[2] not in ("confirmed", "prepared", "issued", "cancelled"):
+    if len(parts) != 3 or parts[2] not in ("prepared", "issued", "cancelled"):
         return await c.answer("Некорректная команда", show_alert=True)
     oid, st = parts[1], parts[2]
     try: await rpc("change_order_status", {"p_order": oid, "p_new": st, "p_actor": c.from_user.id})
@@ -409,8 +418,6 @@ async def pricing_preview(b: OrderPreviewIn, u=Depends(current_user)):
 
 # ----------------------------------------------------------------- Рефералы (только Мюнхен)
 REFERRAL_CITY = "muenchen"
-CHANNEL_ID = int(os.environ.get("REFERRAL_CHANNEL_ID", "-1003727349034"))
-CHANNEL_LINK = os.environ.get("REFERRAL_CHANNEL_LINK", "")
 _bot_username: Optional[str] = None
 
 def _ref_from(text: Optional[str]) -> Optional[int]:
@@ -422,10 +429,15 @@ async def bot_username() -> str:
     if not _bot_username: _bot_username = (await bot.get_me()).username
     return _bot_username
 
-async def is_subscribed(tg: int) -> bool:
-    """Подписка на канал через Telegram. Бот должен быть администратором канала."""
+async def city_channel(city_id: str) -> dict:
+    rows = await db("GET", "cities", params={"id": f"eq.{city_id}", "select": "channel_link,channel_id"}) or []
+    return rows[0] if rows else {}
+
+async def is_subscribed(tg: int, channel_id: Optional[int]) -> bool:
+    """Подписка на канал города через Telegram. Бот должен быть администратором канала."""
+    if not channel_id: return False
     try:
-        m = await bot.get_chat_member(CHANNEL_ID, tg)
+        m = await bot.get_chat_member(channel_id, tg)
         return m.status in ("member", "administrator", "creator")
     except Exception:
         log.warning("referral: subscription check failed")
@@ -434,15 +446,16 @@ async def is_subscribed(tg: int) -> bool:
 @app.get("/api/referral")
 async def referral_info(u=Depends(current_user)):
     tg = u["telegram_id"]
+    ch = await city_channel(REFERRAL_CITY)
     rows = await db("GET", "referrals", params={"referrer_tg": f"eq.{tg}", "order": "created_at.desc",
                                                  "select": "status,created_at,eligible_at,redeemed_at"}) or []
     ready = any(r["status"] == "eligible" for r in rows)
     return {"link": f"https://t.me/{await bot_username()}?start=ref_{tg}",
             "is_munich": u.get("city_id") == REFERRAL_CITY,
-            "channel_link": CHANNEL_LINK or None,
+            "channel_link": ch.get("channel_link") or None,
             "invited": rows,
             "reward_ready": ready,
-            "subscribed": (await is_subscribed(tg)) if ready else None}
+            "subscribed": (await is_subscribed(tg, ch.get("channel_id"))) if ready else None}
 
 @app.get("/api/referral/options")
 async def referral_options(u=Depends(current_user)):
@@ -460,11 +473,26 @@ async def referral_redeem(b: RedeemReferralIn, u=Depends(current_user)):
     rows = await db("GET", "referrals", params={"referrer_tg": f"eq.{tg}", "status": "eq.eligible",
                                                  "order": "eligible_at.asc", "limit": "1", "select": "referred_tg"}) or []
     if not rows: raise HTTPException(409, "no_reward")
-    if not await is_subscribed(tg): raise HTTPException(403, "not_subscribed_self")
-    if not await is_subscribed(rows[0]["referred_tg"]): raise HTTPException(403, "not_subscribed_friend")
+    ch = await city_channel(REFERRAL_CITY)
+    if not await is_subscribed(tg, ch.get("channel_id")): raise HTTPException(403, "not_subscribed_self")
+    if not await is_subscribed(rows[0]["referred_tg"], ch.get("channel_id")): raise HTTPException(403, "not_subscribed_friend")
     res = await rpc("redeem_referral", {"p_referrer": tg, "p_inventory": str(b.inventory_id), "p_key": f"ref:{tg}:{b.idempotency_key}"})
     if not res.get("duplicate"): bg(_after_order(res["id"]))
     return res
+
+class CityChannelIn(BaseModel):
+    channel_link: Optional[str] = Field(None, max_length=200)
+    channel_id: Optional[int] = None
+
+@app.patch("/api/admin/cities/{city_id}/channel")
+async def admin_city_channel(city_id: str, b: CityChannelIn, ctx=Depends(admin_ctx)):
+    require_owner(ctx)
+    link = (b.channel_link or "").strip() or None
+    if link and not link.startswith("https://t.me/"): raise HTTPException(422, "bad_link")
+    if b.channel_id is not None and b.channel_id >= 0: raise HTTPException(422, "bad_channel_id")
+    await db("PATCH", "cities", params={"id": f"eq.{city_id}"}, prefer="return=minimal",
+             json={"channel_link": link, "channel_id": b.channel_id})
+    return {"ok": True}
 
 @app.get("/api/admin/referrals")
 async def admin_referrals(city: Optional[str] = None, ctx=Depends(admin_ctx)):
@@ -535,7 +563,7 @@ async def my_order(oid: UUID, u=Depends(current_user)):
     rows = await db("GET", "orders", params={"id": f"eq.{oid}", "user_id": f"eq.{u['id']}", "select": ORDER_FIELDS})
     if not rows: raise HTTPException(404, "not_found")
     o = rows[0]
-    o["editable"] = o["status"] in ("new", "confirmed") and bool(o.get("city_id"))
+    o["editable"] = o["status"] == "new" and bool(o.get("city_id"))
     return o
 
 # ----------------------------------------------------------------- Админ: общее
@@ -549,7 +577,7 @@ async def check_admin_endpoint(authorization: str = Header("")):
 
 @app.get("/api/admin/cities")
 async def admin_cities(ctx=Depends(admin_ctx)):
-    rows = await db("GET", "cities", params={"select": "id,name,manager_link,manager_contact,active", "order": "sort.asc"}) or []
+    rows = await db("GET", "cities", params={"select": "id,name,manager_link,manager_contact,active,channel_link,channel_id", "order": "sort.asc"}) or []
     if ctx["role"] != "owner": rows = [r for r in rows if r["id"] == ctx["city_id"]]
     return rows
 
