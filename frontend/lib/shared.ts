@@ -20,6 +20,7 @@ export const ERR: Record<string, string> = {
   item_not_found: 'Товар больше недоступен',
   city_mismatch: 'Товар относится к другому городу. Проверьте корзину.',
   city_required: 'Сначала выберите город',
+  age_required: 'Подтвердите, что вам есть 18 лет',
   price_missing: 'Цена товара ещё не указана — оформление недоступно',
   forbidden: 'Нет доступа',
   bad_city: 'Такого города нет',

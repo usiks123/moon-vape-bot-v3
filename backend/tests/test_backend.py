@@ -33,11 +33,12 @@ ADMINS = {7858672760: {"telegram_id": 7858672760, "role": "owner", "city_id": No
 
 @pytest.fixture
 def fake(monkeypatch):
-    state = {"city": "hannover", "calls": [], "rpc": {}}
+    state = {"city": "hannover", "calls": [], "rpc": {}, "age": "2026-01-01T00:00:00+00:00"}
     async def db(method, path, prefer=None, **kw):
         state["calls"].append((method, path, kw.get("params"), kw.get("json")))
         if path.startswith("users"):
-            return [{"id": UID, "telegram_id": 555, "first_name": "Ann", "username": "ann", "city_id": state["city"]}]
+            return [{"id": UID, "telegram_id": 555, "first_name": "Ann", "username": "ann", "city_id": state["city"],
+                     "age_confirmed_at": state["age"]}]
         if path.startswith("admins"):
             tid = int(kw["params"]["telegram_id"].split(".", 1)[1])
             return [ADMINS[tid]] if tid in ADMINS else []
@@ -290,3 +291,33 @@ def test_order_edit_forbidden_error_is_not_leaked(fake):
     oid = "44444444-4444-4444-4444-444444444444"
     r = client.post(f"/api/orders/{oid}/edit", headers=auth(), json={"items": [{"inventory_id": IID, "quantity": 1}], "idempotency_key": "edit-000003"})
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------- возраст 18+ и город по умолчанию
+def test_catalog_blocked_until_age_confirmed(fake):
+    fake["age"] = None
+    r = client.get("/api/catalog", headers=auth())
+    assert r.status_code == 403 and r.json()["detail"] == "age_required"
+    assert rpc_calls(fake, "get_catalog") == []
+
+def test_order_blocked_until_age_confirmed(fake):
+    fake["age"] = None
+    body = {"items": [{"inventory_id": IID, "quantity": 1}], "comment": "", "idempotency_key": "age-000001"}
+    assert client.post("/api/orders", headers=auth(), json=body).status_code == 403
+    assert rpc_calls(fake, "create_order") == []
+
+def test_age_confirm_is_written_once(fake):
+    assert client.post("/api/me/age-confirm", headers=auth()).status_code == 200
+    patch = [c for c in fake["calls"] if c[0] == "PATCH" and c[1].startswith("users")]
+    assert patch and patch[-1][2] == {"id": f"eq.{UID}", "age_confirmed_at": "is.null"}
+
+def test_first_visit_gets_default_city_without_prompt(fake, monkeypatch):
+    fake["city"] = None
+    async def cities():
+        return {"muenchen": {"id": "muenchen", "name": "München", "active": True, "sort": 1},
+                "hannover": {"id": "hannover", "name": "Hannover", "active": True, "sort": 2}}
+    monkeypatch.setattr(main, "city_name_map", cities)
+    r = client.get("/api/me", headers=auth()).json()
+    assert r["city"] == {"id": "muenchen", "name": "München"}
+    patch = [c for c in fake["calls"] if c[0] == "PATCH" and c[1].startswith("users")]
+    assert patch and patch[0][3]["city_id"] == "muenchen"

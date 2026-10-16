@@ -111,6 +111,10 @@ def scope_city(ctx: dict, requested: Optional[str]) -> Optional[str]:
 def require_owner(ctx: dict):
     if ctx["role"] != "owner": raise HTTPException(403, "forbidden")
 
+def require_adult(u: dict):
+    # Возрастная проверка 18+: без подтверждения каталог, корзина и заказы недоступны.
+    if not u.get("age_confirmed_at"): raise HTTPException(403, "age_required")
+
 async def city_name_map() -> dict:
     rows = await db("GET", "cities", params={"select": "id,name,manager_link,active", "order": "sort.asc"}) or []
     return {c["id"]: c for c in rows}
@@ -388,10 +392,22 @@ async def webhook(req: Request):
 @app.get("/api/me")
 async def me(u=Depends(current_user)):
     cities = await city_name_map()
+    active = [x for x in cities.values() if x.get("active")]
+    # Вопроса о городе при входе больше нет: новому пользователю ставим первый активный город,
+    # дальше он меняется в каталоге («Сменить»).
+    if not u.get("city_id") and active:
+        await db("PATCH", "users", params={"id": f"eq.{u['id']}"}, json={"city_id": active[0]["id"], "updated_at": now_iso()})
+        u["city_id"] = active[0]["id"]
     c = cities.get(u.get("city_id")) if u.get("city_id") else None
     manager = (c or {}).get("manager_link") or (f"https://t.me/{OWNER_USERNAME}" if OWNER_USERNAME else None)
     return {"user": u, "cities": [{"id": x["id"], "name": x["name"]} for x in cities.values() if x.get("active")],
             "city": {"id": c["id"], "name": c["name"]} if c else None, "manager_link": manager}
+
+@app.post("/api/me/age-confirm")
+async def confirm_age(u=Depends(current_user)):
+    # Самообъявление 18+ (Telegram возраст не передаёт). Дата пишется один раз, повтор ничего не меняет.
+    await db("PATCH", "users", params={"id": f"eq.{u['id']}", "age_confirmed_at": "is.null"}, json={"age_confirmed_at": now_iso()})
+    return {"ok": True}
 
 @app.put("/api/me/city")
 async def set_city(b: CityIn, u=Depends(current_user)):
@@ -408,11 +424,13 @@ async def set_notifications(b: NotifyIn, u=Depends(current_user)):
 
 @app.get("/api/catalog")
 async def catalog(q: str = "", u=Depends(current_user)):
+    require_adult(u)
     if not u.get("city_id"): raise HTTPException(409, "city_required")
     return await rpc("get_catalog", {"p_city": u["city_id"], "p_q": q.strip()[:60]})
 
 @app.post("/api/pricing/preview")
 async def pricing_preview(b: OrderPreviewIn, u=Depends(current_user)):
+    require_adult(u)
     if not u.get("city_id"): raise HTTPException(409, "city_required")
     return await rpc("pricing_preview", {"p_city": u["city_id"], "p_items": [{"inventory_id": str(i.inventory_id), "quantity": i.quantity} for i in b.items]})
 
@@ -468,6 +486,7 @@ class RedeemReferralIn(BaseModel):
 
 @app.post("/api/referral/redeem")
 async def referral_redeem(b: RedeemReferralIn, u=Depends(current_user)):
+    require_adult(u)
     if u.get("city_id") != REFERRAL_CITY: raise HTTPException(409, "referral_only_munich")
     tg = u["telegram_id"]
     rows = await db("GET", "referrals", params={"referrer_tg": f"eq.{tg}", "status": "eq.eligible",
@@ -510,6 +529,7 @@ async def put_cart(b: CartIn, u=Depends(current_user)):
 
 @app.post("/api/orders")
 async def create_order(b: OrderIn, u=Depends(current_user)):
+    require_adult(u)
     if not u.get("city_id"): raise HTTPException(409, "city_required")
     # Контакт формируется на сервере из данных Telegram. Адрес и доставка не запрашиваются.
     contact = ("@" + u["username"]) if u.get("username") else (" ".join(x for x in [u.get("first_name"), u.get("last_name")] if x) or "Покупатель Telegram")
@@ -534,11 +554,13 @@ def _items_payload(items): return [{"inventory_id": str(i.inventory_id), "quanti
 
 @app.post("/api/orders/{oid}/edit/preview")
 async def edit_preview(oid: UUID, b: OrderPreviewIn, u=Depends(current_user)):
+    require_adult(u)
     # Проверка владельца и статуса выполняется в RPC (чужой заказ = not found).
     return await rpc("customer_edit_preview", {"p_user": u["id"], "p_order": str(oid), "p_items": _items_payload(b.items)})
 
 @app.post("/api/orders/{oid}/edit")
 async def edit_order(oid: UUID, b: CustomerEditIn, u=Depends(current_user)):
+    require_adult(u)
     res = await rpc("customer_edit_order", {"p_user": u["id"], "p_order": str(oid), "p_items": _items_payload(b.items),
                                             "p_key": f"{u['id']}:{b.idempotency_key}"})
     if not res.get("duplicate"):

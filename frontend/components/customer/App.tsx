@@ -35,10 +35,12 @@ export default function CustomerApp() {
   const [cityPicker, setCityPicker] = useState(false), [confirmForeign, setConfirmForeign] = useState(false)
   const hydrated = useRef(false)
   const [editing, setEditing] = useState(false)
+  const [tooYoung, setTooYoung] = useState(false)
 
   const fail = (m: string) => { setToast({ kind: 'err', text: m }); haptic('error') }
   const done = (m: string) => setToast({ kind: 'ok', text: m })
   const city = me?.city || null
+  const adult = !!me?.user?.age_confirmed_at
 
   // Загрузка каталога и корзины для выбранного города. Город берётся из профиля на сервере.
   async function refresh(m: any) {
@@ -53,7 +55,7 @@ export default function CustomerApp() {
   useEffect(() => {
     const w = tg(); if (!w?.initData) { setErr('Откройте приложение из Telegram'); return }
     w.ready(); w.expand(); w.setHeaderColor?.('#08080c'); w.setBackgroundColor?.('#08080c')
-    api('/api/me').then(async m => { setMe(m); await refresh(m); setReady(true) }).catch(e => setErr(e.message))
+    api('/api/me').then(async m => { setMe(m); if (m?.user?.age_confirmed_at) await refresh(m); setReady(true) }).catch(e => setErr(e.message))
   }, [])
 
   // Сохранение корзины на сервере (не только localStorage). Отправляем все строки, включая позиции другого города.
@@ -66,10 +68,10 @@ export default function CustomerApp() {
   }, [cart])
 
   useEffect(() => {
-    if (!ready || !city) return
+    if (!ready || !city || !adult) return
     const t = setTimeout(() => api('/api/catalog' + (q.trim() ? '?q=' + encodeURIComponent(q.trim()) : '')).then(c => setShown(c.products)).catch(e => fail(e.message)), 250)
     return () => clearTimeout(t)
-  }, [q, ready, city?.id])
+  }, [q, ready, city?.id, adult])
 
   useEffect(() => { if (tab === 'profile' && ready && city) api('/api/orders').then(setOrders).catch(e => { setOrders([]); fail(e.message) }) }, [tab, ready])
 
@@ -131,20 +133,34 @@ export default function CustomerApp() {
     catch (e: any) { fail(e.message) }
   }
 
+  async function confirmAge() {
+    if (busy) return
+    setBusy(true)
+    try { await api('/api/me/age-confirm', { method: 'POST' }); const m = await api('/api/me'); setMe(m); await refresh(m) }
+    catch (e: any) { fail(e.message) } finally { setBusy(false) }
+  }
+
   if (err && !ready) return <div className="mv-app"><div className="mv-center"><Moon s={56} />{err}</div></div>
   if (!ready) return <div className="mv-app"><Loading /></div>
 
-  // Первый вход: город не выбран — показываем выбор до каталога.
-  if (!city) return (<div className="mv-app">
+  // Возрастная проверка 18+: до подтверждения магазин не открывается.
+  if (!adult) return (<div className="mv-app">
     {toast && <Toast kind={toast.kind} text={toast.text} onDone={() => setToast(null)} />}
     <div className="mv-page"><Header />
-      <h1 className="mv-h1">Выбор города</h1>
-      <div className="mv-card mv-col" style={{ gap: 12, marginTop: 12 }}><p style={{ margin: 0, lineHeight: 1.5 }}>{CITY_PROMPT}</p>
-        {(me?.cities || []).map((c: any) => <button key={c.id} className="mv-btn" onClick={() => changeCity(c.id)}>{c.name}</button>)}
-        {!(me?.cities || []).length && <div className="mv-sub">Города пока не настроены</div>}
+      <h1 className="mv-h1">Подтвердите возраст</h1>
+      <div className="mv-card mv-col" style={{ gap: 12, marginTop: 12 }}>
+        <p style={{ margin: 0, lineHeight: 1.5 }}>Магазин предназначен только для лиц старше 18 лет.</p>
+        {!tooYoung ? <>
+          <button className="mv-btn" disabled={busy} onClick={confirmAge}>Мне есть 18 лет</button>
+          <button className="mv-btn ghost" onClick={() => setTooYoung(true)}>Мне нет 18 лет</button>
+        </> : <p className="mv-sub" style={{ margin: 0 }}>К сожалению, доступ к магазину открыть нельзя: продажа этой продукции лицам младше 18 лет запрещена.</p>}
       </div>
     </div>
   </div>)
+
+  // Город всегда выбран сервером (по умолчанию первый активный); меняется в каталоге. Если городов нет — заглушка.
+  if (!city) return (<div className="mv-app"><div className="mv-page"><Header />
+    <Empty icon={Icon.search(30)} title="Магазин временно недоступен" text="Города пока не настроены" /></div></div>)
 
   const Line = ({ l }: any) => (
     <div className="mv-row">
@@ -217,7 +233,6 @@ export default function CustomerApp() {
         <div><div className="mv-sub">Город</div><b>{city.name}</b></div>
         <button className="mv-btn ghost sm" onClick={() => setCityPicker(true)}>Сменить город</button>
       </div>
-      <ReferralCard fail={fail} done={done} />
       {orders === null && <Loading />}
       {orders && <>
         <h2 className="mv-h2">Активные заказы</h2>
@@ -232,6 +247,7 @@ export default function CustomerApp() {
         {!history.length && <Empty icon={Icon.list(30)} title="У вас пока нет завершённых заказов" text="Выданные и отменённые заказы появятся здесь" />}
         <div className="mv-col">{history.map(orderCard)}</div>
       </>}
+      <ReferralCard fail={fail} done={done} />
     </div>}
 
     {tab === 'order' && order && <div className="mv-page" key="order">
