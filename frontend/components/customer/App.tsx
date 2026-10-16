@@ -243,11 +243,11 @@ export default function CustomerApp() {
             <div className="mv-row" style={{ gap: 6, margin: '14px 0 8px' }}>{FLOW.map((s, i) => <div key={s} style={{ flex: 1, height: 4, borderRadius: 2, background: i <= si ? 'var(--accent)' : 'var(--surface-3)', transition: 'background .3s' }} />)}</div>
             <div className="mv-row mv-between"><StatusBadge status={o.status} /><span className="mv-sub">Этап: {FLOW_LABEL[o.status]}</span></div>
           </button>) })}</div>
+        <ReferralCard fail={fail} done={done} />
         <h2 className="mv-h2">История заказов</h2>
         {!history.length && <Empty icon={Icon.list(30)} title="У вас пока нет завершённых заказов" text="Выданные и отменённые заказы появятся здесь" />}
         <div className="mv-col">{history.map(orderCard)}</div>
       </>}
-      <ReferralCard fail={fail} done={done} />
     </div>}
 
     {tab === 'order' && order && <div className="mv-page" key="order">
