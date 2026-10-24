@@ -7,16 +7,16 @@ import InventorySection from './InventorySection'
 import { CategoriesSection, OrdersSection, PricesSection, ProductsSection } from './AdminSections'
 import SettlementSection from './SettlementSection'
 import BroadcastSection from './BroadcastSection'
-import ReferralsSection from './ReferralsSection'
 import CitiesSection from './CitiesSection'
+import FinanceSection from './FinanceSection'
 
 type Role = 'owner' | 'city_admin'
 
 // Разделы зависят от роли. Это только интерфейс: права всё равно проверяет backend и RPC.
 function moreItems(role: Role): [string, string, any][] {
   // «Оптовые цены» видны всем админам; редактирование внутри — только владельцу (ProductSheet).
-  const base: [string, string, any][] = [['products', 'Товары', Icon.tag], ['prices', 'Оптовые цены', Icon.euro], ['settlement', 'Взаиморасчёты', Icon.euro], ['broadcast', 'Оповещение о наличии', Icon.chat], ['referrals', 'Рефералы (Мюнхен)', Icon.chat]]
-  return role === 'owner' ? [...base, ['categories', 'Категории', Icon.grid], ['cities', 'Города и каналы', Icon.chat]] : base
+  const base: [string, string, any][] = [['products', 'Товары', Icon.tag], ['prices', 'Оптовые цены', Icon.euro], ['settlement', 'Взаиморасчёты', Icon.euro], ['broadcast', 'Оповещение о наличии', Icon.chat]]
+  return role === 'owner' ? [...base, ['finance', 'Финансы', Icon.euro], ['categories', 'Категории', Icon.grid], ['cities', 'Города и каналы', Icon.chat]] : base
 }
 
 export default function AdminApp({ role, cityId }: { role: Role; cityId: string | null }) {
@@ -56,7 +56,7 @@ export default function AdminApp({ role, cityId }: { role: Role; cityId: string 
         {section === 'categories' && role === 'owner' && <CategoriesSection {...shared} />}
         {section === 'settlement' && <SettlementSection {...shared} />}
         {section === 'broadcast' && <BroadcastSection {...shared} />}
-        {section === 'referrals' && <ReferralsSection {...shared} />}
+        {section === 'finance' && role === 'owner' && <FinanceSection cities={cities} catalog={catalog} onNotify={notify} />}
         {section === 'cities' && role === 'owner' && <CitiesSection cities={cities} onNotify={notify} onRefresh={reloadCities} />}
       </div>
       {more && <Sheet onClose={() => setMore(false)}>

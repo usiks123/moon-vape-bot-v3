@@ -1,5 +1,5 @@
 import os, re, hmac, hashlib, json, time, html, asyncio, logging
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 from typing import Optional, Literal
 from urllib.parse import parse_qsl
@@ -40,7 +40,7 @@ ADMIN_ACTIONS = {
     "prepared": [("🤝 Выдан", "issued"), ("❌ Отменить", "cancelled")],
 }
 RPC_ERR = {
-    "forbidden": "Нет доступа", "no_reward": "Бонуса пока нет", "not_subscribed_self": "Подпишитесь на канал, чтобы получить бонус", "not_subscribed_friend": "Друг ещё не подписан на канал — бонус ждёт", "bad_transition": "Этот переход статуса недопустим",
+    "forbidden": "Нет доступа", "bad_transition": "Этот переход статуса недопустим",
     "bad_status": "В этом статусе оплату отметить нельзя", "order_not_found": "Заказ не найден",
     "below_reserved": "Нельзя установить остаток меньше резерва", "exceeds_balance": "Сумма больше задолженности",
 }
@@ -55,7 +55,7 @@ def e(s): return html.escape(str(s if s is not None else ""))
 # ----------------------------------------------------------------- БД (PostgREST)
 def _map_error(code: int, msg: str):
     if msg == "forbidden": return 403, "forbidden"
-    if msg in {"order_not_found", "item_not_found", "user_not_found"}: return 404, msg
+    if msg in {"order_not_found", "item_not_found", "user_not_found", "entry_not_found"}: return 404, msg
     if code == 400: return 409, (msg if _SNAKE.match(msg or "") else "conflict")
     if code == 409: return 409, "conflict"
     log.error("db error %s: %s", code, (msg or "")[:200])
@@ -277,7 +277,6 @@ class ProductPatch(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200); description: Optional[str] = Field(None, max_length=2000)
     category_id: Optional[int] = None
     active: Optional[bool] = None; image_path: Optional[str] = Field(None, max_length=300)
-    referral_excluded: Optional[bool] = None
 
 class PricesIn(BaseModel):
     price: Optional[float] = Field(None, ge=0, le=100000)
@@ -319,21 +318,12 @@ class BroadcastIn(BaseModel):
 
 @router.message(CommandStart())
 async def start(m: Message):
-    # Реферальная ссылка засчитывается только если пользователя ещё нет в базе (новый клиент).
-    ref = _ref_from(m.text)
-    is_new = False
-    if ref:
-        try: is_new = not await db("GET", "users", params={"telegram_id": f"eq.{m.from_user.id}", "select": "telegram_id"})
-        except Exception: log.warning("referral: user check failed")
     # Фиксируем, что бот может писать пользователю (для рассылок).
     try:
         await db("POST", "users?on_conflict=telegram_id", prefer="resolution=merge-duplicates,return=minimal", json={
             "telegram_id": m.from_user.id, "username": m.from_user.username, "first_name": m.from_user.first_name,
             "bot_started_at": now_iso(), "bot_blocked": False})
     except Exception: log.warning("could not record bot start")
-    if ref and is_new:
-        try: await rpc("referral_register", {"p_referrer": ref, "p_referred": m.from_user.id})
-        except Exception: log.warning("referral: register failed")
     rows = [[InlineKeyboardButton(text="Открыть магазин", web_app=WebAppInfo(url=WEBAPP))]]
     try:
         chans = await db("GET", "cities", params={"select": "id,name,channel_link", "channel_link": "not.is.null", "order": "sort.asc"}) or []
@@ -344,8 +334,6 @@ async def start(m: Message):
     text = "Добро пожаловать в <b>MoonVape</b>!"
     if chans:
         text += "\n\nПодпишитесь на канал вашего города: новости и наличие."
-        if any(c["id"] == REFERRAL_CITY for c in chans):
-            text += "\nМюнхен: для акции «Приведи друга» подписка на канал обязательна."
     await m.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 async def _refresh_card(c: CallbackQuery, oid: str):
@@ -434,90 +422,17 @@ async def pricing_preview(b: OrderPreviewIn, u=Depends(current_user)):
     if not u.get("city_id"): raise HTTPException(409, "city_required")
     return await rpc("pricing_preview", {"p_city": u["city_id"], "p_items": [{"inventory_id": str(i.inventory_id), "quantity": i.quantity} for i in b.items]})
 
-# ----------------------------------------------------------------- Рефералы (только Мюнхен)
-REFERRAL_CITY = "muenchen"
-_bot_username: Optional[str] = None
-
-def _ref_from(text: Optional[str]) -> Optional[int]:
-    m = re.search(r"ref_(\d+)", text or "")
-    return int(m.group(1)) if m else None
-
-async def bot_username() -> str:
-    global _bot_username
-    if not _bot_username: _bot_username = (await bot.get_me()).username
-    return _bot_username
-
-async def city_channel(city_id: str) -> dict:
-    rows = await db("GET", "cities", params={"id": f"eq.{city_id}", "select": "channel_link,channel_id"}) or []
-    return rows[0] if rows else {}
-
-async def is_subscribed(tg: int, channel_id: Optional[int]) -> bool:
-    """Подписка на канал города через Telegram. Бот должен быть администратором канала."""
-    if not channel_id: return False
-    try:
-        m = await bot.get_chat_member(channel_id, tg)
-        return m.status in ("member", "administrator", "creator")
-    except Exception:
-        log.warning("referral: subscription check failed")
-        return False
-
-@app.get("/api/referral")
-async def referral_info(u=Depends(current_user)):
-    tg = u["telegram_id"]
-    ch = await city_channel(REFERRAL_CITY)
-    rows = await db("GET", "referrals", params={"referrer_tg": f"eq.{tg}", "order": "created_at.desc",
-                                                 "select": "status,created_at,eligible_at,redeemed_at"}) or []
-    ready = any(r["status"] == "eligible" for r in rows)
-    return {"link": f"https://t.me/{await bot_username()}?start=ref_{tg}",
-            "is_munich": u.get("city_id") == REFERRAL_CITY,
-            "channel_link": ch.get("channel_link") or None,
-            "invited": rows,
-            "reward_ready": ready,
-            "subscribed": (await is_subscribed(tg, ch.get("channel_id"))) if ready else None}
-
-@app.get("/api/referral/options")
-async def referral_options(u=Depends(current_user)):
-    if u.get("city_id") != REFERRAL_CITY: return []
-    return await rpc("referral_options", {"p_city": REFERRAL_CITY}) or []
-
-class RedeemReferralIn(BaseModel):
-    inventory_id: UUID
-    idempotency_key: str = Field(..., min_length=8, max_length=80)
-
-@app.post("/api/referral/redeem")
-async def referral_redeem(b: RedeemReferralIn, u=Depends(current_user)):
-    require_adult(u)
-    if u.get("city_id") != REFERRAL_CITY: raise HTTPException(409, "referral_only_munich")
-    tg = u["telegram_id"]
-    rows = await db("GET", "referrals", params={"referrer_tg": f"eq.{tg}", "status": "eq.eligible",
-                                                 "order": "eligible_at.asc", "limit": "1", "select": "referred_tg"}) or []
-    if not rows: raise HTTPException(409, "no_reward")
-    ch = await city_channel(REFERRAL_CITY)
-    if not await is_subscribed(tg, ch.get("channel_id")): raise HTTPException(403, "not_subscribed_self")
-    if not await is_subscribed(rows[0]["referred_tg"], ch.get("channel_id")): raise HTTPException(403, "not_subscribed_friend")
-    res = await rpc("redeem_referral", {"p_referrer": tg, "p_inventory": str(b.inventory_id), "p_key": f"ref:{tg}:{b.idempotency_key}"})
-    if not res.get("duplicate"): bg(_after_order(res["id"]))
-    return res
-
+# ----------------------------------------------------------------- Каналы городов (владелец)
 class CityChannelIn(BaseModel):
     channel_link: Optional[str] = Field(None, max_length=200)
-    channel_id: Optional[int] = None
 
 @app.patch("/api/admin/cities/{city_id}/channel")
 async def admin_city_channel(city_id: str, b: CityChannelIn, ctx=Depends(admin_ctx)):
     require_owner(ctx)
     link = (b.channel_link or "").strip() or None
     if link and not link.startswith("https://t.me/"): raise HTTPException(422, "bad_link")
-    if b.channel_id is not None and b.channel_id >= 0: raise HTTPException(422, "bad_channel_id")
-    await db("PATCH", "cities", params={"id": f"eq.{city_id}"}, prefer="return=minimal",
-             json={"channel_link": link, "channel_id": b.channel_id})
+    await db("PATCH", "cities", params={"id": f"eq.{city_id}"}, prefer="return=minimal", json={"channel_link": link})
     return {"ok": True}
-
-@app.get("/api/admin/referrals")
-async def admin_referrals(city: Optional[str] = None, ctx=Depends(admin_ctx)):
-    c = scope_city(ctx, city)
-    if not c: raise HTTPException(400, "city_required")
-    return await rpc("admin_referrals", {"p_actor": ctx["telegram_id"], "p_city": c})
 
 @app.get("/api/cart")
 async def get_cart(u=Depends(current_user)): return await rpc("get_cart", {"p_user": u["id"]}) or []
@@ -599,7 +514,7 @@ async def check_admin_endpoint(authorization: str = Header("")):
 
 @app.get("/api/admin/cities")
 async def admin_cities(ctx=Depends(admin_ctx)):
-    rows = await db("GET", "cities", params={"select": "id,name,manager_link,manager_contact,active,channel_link,channel_id", "order": "sort.asc"}) or []
+    rows = await db("GET", "cities", params={"select": "id,name,manager_link,manager_contact,active,channel_link", "order": "sort.asc"}) or []
     if ctx["role"] != "owner": rows = [r for r in rows if r["id"] == ctx["city_id"]]
     return rows
 
@@ -829,6 +744,64 @@ async def broadcast_status(broadcast_id: int, ctx=Depends(admin_ctx)):
     counts = {"sent": 0, "failed": 0, "pending": 0}
     for r in out: counts[r["status"]] = counts.get(r["status"], 0) + 1
     return {**rows[0], "sent": counts["sent"], "failed": counts["failed"], "pending": counts["pending"]}
+
+# ----------------------------------------------------------------- Финансы (только владелец)
+# Расчёты выполняются в PostgreSQL (миграция 0018). Backend только проверяет роль и параметры.
+class FinanceEntryIn(BaseModel):
+    op_type: Literal["expense", "cash_in", "cash_out"]
+    amount: float = Field(gt=0, le=1000000)
+    city_id: Optional[str] = Field(None, min_length=2, max_length=40)
+    category: str = Field("", max_length=60)
+    description: str = Field("", max_length=300)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+class FinanceReverseIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=300)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+def _check_period(date_from: date, date_to: date):
+    if date_to < date_from or (date_to - date_from).days > 366: raise HTTPException(422, "bad_period")
+
+@app.get("/api/admin/finance/summary")
+async def finance_summary_ep(date_from: date, date_to: date, city: Optional[str] = None, category_id: Optional[int] = None,
+                             product_id: Optional[UUID] = None, ctx=Depends(admin_ctx)):
+    require_owner(ctx)
+    _check_period(date_from, date_to)
+    return await rpc("finance_summary", {"p_actor": ctx["telegram_id"], "p_city": city or None,
+                                         "p_date_from": date_from.isoformat(), "p_date_to": date_to.isoformat(),
+                                         "p_category": category_id, "p_product": str(product_id) if product_id else None})
+
+@app.get("/api/admin/finance/products")
+async def finance_products_ep(date_from: date, date_to: date, city: Optional[str] = None, category_id: Optional[int] = None,
+                              ctx=Depends(admin_ctx)):
+    require_owner(ctx)
+    _check_period(date_from, date_to)
+    return await rpc("finance_products", {"p_actor": ctx["telegram_id"], "p_city": city or None,
+                                          "p_date_from": date_from.isoformat(), "p_date_to": date_to.isoformat(),
+                                          "p_category": category_id}) or []
+
+@app.get("/api/admin/finance/entries")
+async def finance_entries_ep(date_from: date, date_to: date, city: Optional[str] = None,
+                             limit: int = Query(200, ge=1, le=500), ctx=Depends(admin_ctx)):
+    require_owner(ctx)
+    _check_period(date_from, date_to)
+    return await rpc("finance_entries_list", {"p_actor": ctx["telegram_id"], "p_city": city or None,
+                                              "p_date_from": date_from.isoformat(), "p_date_to": date_to.isoformat(),
+                                              "p_limit": limit}) or []
+
+@app.post("/api/admin/finance/entries")
+async def finance_post_entry_ep(b: FinanceEntryIn, ctx=Depends(admin_ctx)):
+    require_owner(ctx)
+    return await rpc("finance_post_entry", {"p_actor": ctx["telegram_id"], "p_op": b.op_type, "p_amount": round(b.amount, 2),
+                                            "p_city": b.city_id or None, "p_category": b.category.strip(),
+                                            "p_description": b.description.strip(), "p_key": b.idempotency_key})
+
+@app.post("/api/admin/finance/entries/{entry_id}/reverse")
+async def finance_reverse_entry_ep(entry_id: int, b: FinanceReverseIn, ctx=Depends(admin_ctx)):
+    # Исправление ошибки только сторно: исходная запись остаётся в журнале.
+    require_owner(ctx)
+    return await rpc("finance_reverse_entry", {"p_actor": ctx["telegram_id"], "p_entry": entry_id,
+                                               "p_reason": b.reason.strip(), "p_key": b.idempotency_key})
 
 # ----------------------------------------------------------------- Экспорт CSV (с учётом города)
 def _csv(rows: list, header: list) -> str:
