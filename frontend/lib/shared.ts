@@ -11,15 +11,12 @@ export const ST_CLASS: Record<string, string> = {
 }
 // Сообщения об ошибках из backend (detail) и RPC.
 export const ERR: Record<string, string> = {
-  no_reward: 'Бонуса пока нет: нужно, чтобы друг оформил и получил свой первый заказ',
-  not_subscribed_self: 'Подпишитесь на канал, чтобы получить бонус',
-  not_subscribed_friend: 'Друг ещё не подписан на канал — бонус ждёт',
-  referral_only_munich: 'Бонус за друга действует только для клиентов Мюнхена',
   insufficient_stock: 'Недостаточно товара в выбранном городе — обновите корзину',
   wholesale_manager: 'От 50 шт. — цена по договорённости с менеджером.',
   item_not_found: 'Товар больше недоступен',
   city_mismatch: 'Товар относится к другому городу. Проверьте корзину.',
   city_required: 'Сначала выберите город',
+  age_required: 'Подтвердите, что вам есть 18 лет',
   price_missing: 'Цена товара ещё не указана — оформление недоступно',
   forbidden: 'Нет доступа',
   bad_city: 'Такого города нет',
@@ -45,6 +42,14 @@ export const ERR: Record<string, string> = {
   tier_price_missing: 'Не задана оптовая цена для одного из товаров',
   bad_tiers: 'Некорректная сетка оптовых цен',
   bad_tier: 'Такой ступени у товара нет',
+  bad_period: 'Проверьте период: дата «по» не раньше даты «с», период не длиннее года',
+  bad_op: 'Неизвестный тип операции',
+  bad_text: 'Слишком длинное описание или категория',
+  category_required: 'Укажите категорию расхода',
+  reason_required: 'Причина сторно: от 5 до 300 символов',
+  entry_not_found: 'Запись журнала не найдена',
+  already_reversed: 'Эта запись уже сторнирована',
+  cannot_reverse_reversal: 'Сторно нельзя отменить сторно-записью',
 }
 export const tg = () => (typeof window !== 'undefined' ? (window as any).Telegram?.WebApp : undefined)
 export const API = process.env.NEXT_PUBLIC_API_URL || ''

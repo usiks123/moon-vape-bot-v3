@@ -35,10 +35,12 @@ export default function CustomerApp() {
   const [cityPicker, setCityPicker] = useState(false), [confirmForeign, setConfirmForeign] = useState(false)
   const hydrated = useRef(false)
   const [editing, setEditing] = useState(false)
+  const [tooYoung, setTooYoung] = useState(false)
 
   const fail = (m: string) => { setToast({ kind: 'err', text: m }); haptic('error') }
   const done = (m: string) => setToast({ kind: 'ok', text: m })
   const city = me?.city || null
+  const adult = !!me?.user?.age_confirmed_at
 
   // Загрузка каталога и корзины для выбранного города. Город берётся из профиля на сервере.
   async function refresh(m: any) {
@@ -53,7 +55,7 @@ export default function CustomerApp() {
   useEffect(() => {
     const w = tg(); if (!w?.initData) { setErr('Откройте приложение из Telegram'); return }
     w.ready(); w.expand(); w.setHeaderColor?.('#08080c'); w.setBackgroundColor?.('#08080c')
-    api('/api/me').then(async m => { setMe(m); await refresh(m); setReady(true) }).catch(e => setErr(e.message))
+    api('/api/me').then(async m => { setMe(m); if (m?.user?.age_confirmed_at) await refresh(m); setReady(true) }).catch(e => setErr(e.message))
   }, [])
 
   // Сохранение корзины на сервере (не только localStorage). Отправляем все строки, включая позиции другого города.
@@ -66,10 +68,10 @@ export default function CustomerApp() {
   }, [cart])
 
   useEffect(() => {
-    if (!ready || !city) return
+    if (!ready || !city || !adult) return
     const t = setTimeout(() => api('/api/catalog' + (q.trim() ? '?q=' + encodeURIComponent(q.trim()) : '')).then(c => setShown(c.products)).catch(e => fail(e.message)), 250)
     return () => clearTimeout(t)
-  }, [q, ready, city?.id])
+  }, [q, ready, city?.id, adult])
 
   useEffect(() => { if (tab === 'profile' && ready && city) api('/api/orders').then(setOrders).catch(e => { setOrders([]); fail(e.message) }) }, [tab, ready])
 
@@ -131,20 +133,34 @@ export default function CustomerApp() {
     catch (e: any) { fail(e.message) }
   }
 
+  async function confirmAge() {
+    if (busy) return
+    setBusy(true)
+    try { await api('/api/me/age-confirm', { method: 'POST' }); const m = await api('/api/me'); setMe(m); await refresh(m) }
+    catch (e: any) { fail(e.message) } finally { setBusy(false) }
+  }
+
   if (err && !ready) return <div className="mv-app"><div className="mv-center"><Moon s={56} />{err}</div></div>
   if (!ready) return <div className="mv-app"><Loading /></div>
 
-  // Первый вход: город не выбран — показываем выбор до каталога.
-  if (!city) return (<div className="mv-app">
+  // Возрастная проверка 18+: до подтверждения магазин не открывается.
+  if (!adult) return (<div className="mv-app">
     {toast && <Toast kind={toast.kind} text={toast.text} onDone={() => setToast(null)} />}
     <div className="mv-page"><Header />
-      <h1 className="mv-h1">Выбор города</h1>
-      <div className="mv-card mv-col" style={{ gap: 12, marginTop: 12 }}><p style={{ margin: 0, lineHeight: 1.5 }}>{CITY_PROMPT}</p>
-        {(me?.cities || []).map((c: any) => <button key={c.id} className="mv-btn" onClick={() => changeCity(c.id)}>{c.name}</button>)}
-        {!(me?.cities || []).length && <div className="mv-sub">Города пока не настроены</div>}
+      <h1 className="mv-h1">Подтвердите возраст</h1>
+      <div className="mv-card mv-col" style={{ gap: 12, marginTop: 12 }}>
+        <p style={{ margin: 0, lineHeight: 1.5 }}>Магазин предназначен только для лиц старше 18 лет.</p>
+        {!tooYoung ? <>
+          <button className="mv-btn" disabled={busy} onClick={confirmAge}>Мне есть 18 лет</button>
+          <button className="mv-btn ghost" onClick={() => setTooYoung(true)}>Мне нет 18 лет</button>
+        </> : <p className="mv-sub" style={{ margin: 0 }}>К сожалению, доступ к магазину открыть нельзя: продажа этой продукции лицам младше 18 лет запрещена.</p>}
       </div>
     </div>
   </div>)
+
+  // Город всегда выбран сервером (по умолчанию первый активный); меняется в каталоге. Если городов нет — заглушка.
+  if (!city) return (<div className="mv-app"><div className="mv-page"><Header />
+    <Empty icon={Icon.search(30)} title="Магазин временно недоступен" text="Города пока не настроены" /></div></div>)
 
   const Line = ({ l }: any) => (
     <div className="mv-row">
@@ -217,7 +233,6 @@ export default function CustomerApp() {
         <div><div className="mv-sub">Город</div><b>{city.name}</b></div>
         <button className="mv-btn ghost sm" onClick={() => setCityPicker(true)}>Сменить город</button>
       </div>
-      <ReferralCard fail={fail} done={done} />
       {orders === null && <Loading />}
       {orders && <>
         <h2 className="mv-h2">Активные заказы</h2>
@@ -380,66 +395,3 @@ function OrderEditor({ order, catalog, onClose, onSaved }: any) {
   </Sheet>)
 }
 
-// Приведи друга: ссылка, статусы и выбор бонусной жидкости (только Мюнхен).
-function ReferralCard({ fail, done }: { fail: (m: string) => void; done: (m: string) => void }) {
-  const [info, setInfo] = useState<any>(null), [opts, setOpts] = useState<any[]>([]), [pick, setPick] = useState(''), [busy, setBusy] = useState(false), [q, setQ] = useState('')
-  const load = async () => {
-    try {
-      const r = await api('/api/referral'); setInfo(r)
-      setOpts(r.is_munich && r.reward_ready && r.subscribed ? await api('/api/referral/options') : [])
-    } catch (e: any) { fail(e.message) }
-  }
-  useEffect(() => { load() }, [])
-  if (!info) return null
-  const cnt = (st: string) => info.invited.filter((r: any) => r.status === st).length
-  const qn = q.trim().toLowerCase()
-  const shownOpts = opts.filter(o => !qn || `${o.name} ${o.variant || ''}`.toLowerCase().includes(qn))
-  const pickName = opts.find(o => o.inventory_id === pick)?.name
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(info.link); done('Ссылка скопирована') }
-    catch { fail('Не удалось скопировать. Выделите ссылку и скопируйте вручную') }
-  }
-  const redeem = async () => {
-    if (!pick) return
-    setBusy(true)
-    try {
-      await api('/api/referral/redeem', { method: 'POST', body: JSON.stringify({ inventory_id: pick, idempotency_key: crypto.randomUUID() }) })
-      done('Бонус оформлен: заказ создан, он бесплатный'); setPick(''); setQ(''); await load()
-    } catch (e: any) { fail(e.message) } finally { setBusy(false) }
-  }
-  return (<div className="mv-card" style={{ marginTop: 12 }}>
-    <div style={{ fontWeight: 800, marginBottom: 4 }}>Приведи друга — жидкость бесплатно</div>
-    {!info.is_munich ? <div className="mv-sub">Акция действует только для клиентов Мюнхена.</div> : <>
-      <div className="mv-sub" style={{ marginBottom: 10 }}>Бонус получаете вы, когда друг впервые заказывает у нас и получает заказ. Заказ должен быть сделан из категорий Жидкости, Pod-системы, Снюс, Одноразки (исключение: Elf Bar 2K), но не из картриджей и Elf Bar 2000. Бонус: одна жидкость Elfliq или Vozol бесплатно. Вы и друг должны быть подписаны на канал.</div>
-            <div className="mv-sub" style={{ marginBottom: 4 }}>Бот: ссылка для друга</div>
-      <div className="mv-row" style={{ gap: 8 }}>
-        <input className="mv-input sm" readOnly value={info.link} onFocus={e => e.target.select()} style={{ flex: 1, minWidth: 0 }} />
-        <button className="mv-btn sm" style={{ width: 'auto' }} onClick={copy}>Копировать</button>
-      </div>
-      {info.channel_link && <>
-        <div className="mv-sub" style={{ margin: '12px 0 4px' }}>Канал: подписка обязательна</div>
-        <a className="mv-btn ghost sm" style={{ width: 'auto', display: 'inline-flex', alignItems: 'center' }} href={info.channel_link} target="_blank" rel="noreferrer">Открыть канал</a>
-      </>}
-      <div className="mv-sub" style={{ marginTop: 10 }}>Приглашено: {info.invited.length} · ждут покупки друга: {cnt('pending')} · бонус готов: {cnt('eligible')} · получено: {cnt('redeemed')}</div>
-      {info.reward_ready && !info.subscribed && <div className="mv-note" style={{ marginTop: 10 }}>
-        Бонус готов. Подпишитесь на канал, чтобы его получить.{' '}
-        {info.channel_link && <a href={info.channel_link} target="_blank" rel="noreferrer">Открыть канал</a>}{' '}
-        <button className="mv-link" onClick={load}>Проверить</button></div>}
-      {info.reward_ready && info.subscribed && <div className="mv-col" style={{ marginTop: 10 }}>
-        <div className="mv-sub">Выберите жидкость Elfliq или Vozol:</div>
-        <input className="mv-input" placeholder="Поиск по названию или вкусу" value={q} onChange={e => setQ(e.target.value)} />
-        <div className="mv-col" style={{ gap: 6, maxHeight: 320, overflowY: 'auto' }}>
-          {shownOpts.map((o: any) => {
-            const on = pick === o.inventory_id
-            return (<button key={o.inventory_id} className="mv-card tap mv-row mv-between mv-tap" style={{ padding: 12, borderColor: on ? 'var(--accent)' : undefined }} onClick={() => setPick(o.inventory_id)}>
-              <div className="mv-grow" style={{ minWidth: 0 }}><b className="mv-trunc" style={{ display: 'block' }}>{o.name}</b>{o.variant && <div className="mv-sub mv-trunc">{o.variant}</div>}</div>
-              <span className="mv-sub" style={{ flexShrink: 0 }}>{on ? 'выбрано' : `есть ${o.available}`}</span>
-            </button>)
-          })}
-          {!shownOpts.length && <div className="mv-sub">Ничего не найдено</div>}
-        </div>
-        <button className="mv-btn" disabled={!pick || busy} onClick={redeem}>{pickName ? `Получить бесплатно: ${pickName}` : 'Выберите жидкость из списка'}</button>
-      </div>}
-    </>}
-  </div>)
-}

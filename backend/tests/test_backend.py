@@ -33,11 +33,12 @@ ADMINS = {7858672760: {"telegram_id": 7858672760, "role": "owner", "city_id": No
 
 @pytest.fixture
 def fake(monkeypatch):
-    state = {"city": "hannover", "calls": [], "rpc": {}}
+    state = {"city": "hannover", "calls": [], "rpc": {}, "age": "2026-01-01T00:00:00+00:00"}
     async def db(method, path, prefer=None, **kw):
         state["calls"].append((method, path, kw.get("params"), kw.get("json")))
         if path.startswith("users"):
-            return [{"id": UID, "telegram_id": 555, "first_name": "Ann", "username": "ann", "city_id": state["city"]}]
+            return [{"id": UID, "telegram_id": 555, "first_name": "Ann", "username": "ann", "city_id": state["city"],
+                     "age_confirmed_at": state["age"]}]
         if path.startswith("admins"):
             tid = int(kw["params"]["telegram_id"].split(".", 1)[1])
             return [ADMINS[tid]] if tid in ADMINS else []
@@ -290,3 +291,106 @@ def test_order_edit_forbidden_error_is_not_leaked(fake):
     oid = "44444444-4444-4444-4444-444444444444"
     r = client.post(f"/api/orders/{oid}/edit", headers=auth(), json={"items": [{"inventory_id": IID, "quantity": 1}], "idempotency_key": "edit-000003"})
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------- возраст 18+ и город по умолчанию
+def test_catalog_blocked_until_age_confirmed(fake):
+    fake["age"] = None
+    r = client.get("/api/catalog", headers=auth())
+    assert r.status_code == 403 and r.json()["detail"] == "age_required"
+    assert rpc_calls(fake, "get_catalog") == []
+
+def test_order_blocked_until_age_confirmed(fake):
+    fake["age"] = None
+    body = {"items": [{"inventory_id": IID, "quantity": 1}], "comment": "", "idempotency_key": "age-000001"}
+    assert client.post("/api/orders", headers=auth(), json=body).status_code == 403
+    assert rpc_calls(fake, "create_order") == []
+
+def test_age_confirm_is_written_once(fake):
+    assert client.post("/api/me/age-confirm", headers=auth()).status_code == 200
+    patch = [c for c in fake["calls"] if c[0] == "PATCH" and c[1].startswith("users")]
+    assert patch and patch[-1][2] == {"id": f"eq.{UID}", "age_confirmed_at": "is.null"}
+
+def test_first_visit_gets_default_city_without_prompt(fake, monkeypatch):
+    fake["city"] = None
+    async def cities():
+        return {"muenchen": {"id": "muenchen", "name": "München", "active": True, "sort": 1},
+                "hannover": {"id": "hannover", "name": "Hannover", "active": True, "sort": 2}}
+    monkeypatch.setattr(main, "city_name_map", cities)
+    r = client.get("/api/me", headers=auth()).json()
+    assert r["city"] == {"id": "muenchen", "name": "München"}
+    patch = [c for c in fake["calls"] if c[0] == "PATCH" and c[1].startswith("users")]
+    assert patch and patch[0][3]["city_id"] == "muenchen"
+
+# ---------------------------------------------------------------- удалённая акция «Приведи друга»
+def test_no_referral_routes_remain():
+    paths = [getattr(r, "path", "") for r in main.app.routes]
+    assert not [p for p in paths if "referral" in p]
+    assert not [p for p in paths if p.startswith("/api/admin/cities") and "channel_id" in p]
+
+def test_referral_helpers_removed():
+    for name in ("_ref_from", "is_subscribed", "bot_username", "city_channel", "REFERRAL_CITY"):
+        assert not hasattr(main, name), name
+
+def test_channel_patch_is_owner_only_and_link_only(fake):
+    r = client.patch("/api/admin/cities/hannover/channel", headers=auth(HANN_ADMIN), json={"channel_link": "https://t.me/+x"})
+    assert r.status_code == 403
+    r = client.patch("/api/admin/cities/hannover/channel", headers=auth(OWNER), json={"channel_link": "https://t.me/+x", "channel_id": -1001})
+    assert r.status_code == 200
+    patch = [c for c in fake["calls"] if c[0] == "PATCH" and c[1] == "cities"]
+    assert patch and patch[-1][3] == {"channel_link": "https://t.me/+x"}
+
+# ---------------------------------------------------------------- финансы: права и параметры
+FIN_PARAMS = {"date_from": "2026-10-01", "date_to": "2026-10-31"}
+
+def test_finance_is_owner_only(fake):
+    for path in ("/api/admin/finance/summary", "/api/admin/finance/products", "/api/admin/finance/entries"):
+        assert client.get(path, headers=auth(HANN_ADMIN), params=FIN_PARAMS).status_code == 403, path
+        assert client.get(path, headers=auth(CUSTOMER), params=FIN_PARAMS).status_code == 403, path
+
+def test_finance_summary_passes_owner_and_period(fake):
+    r = client.get("/api/admin/finance/summary", headers=auth(OWNER), params=FIN_PARAMS)
+    assert r.status_code == 200
+    args = rpc_calls(fake, "finance_summary")[0][2]
+    assert args["p_actor"] == 7858672760 and args["p_city"] is None
+    assert args["p_date_from"] == "2026-10-01" and args["p_date_to"] == "2026-10-31"
+
+def test_finance_period_validated_before_db(fake):
+    bad = {"date_from": "2026-10-31", "date_to": "2026-10-01"}
+    assert client.get("/api/admin/finance/summary", headers=auth(OWNER), params=bad).status_code == 422
+    assert not rpc_calls(fake, "finance_summary")
+
+def test_finance_post_entry_passes_key_and_category(fake):
+    body = {"op_type": "expense", "amount": 12.5, "category": " Аренда ", "description": "", "idempotency_key": "fin-key-0001"}
+    r = client.post("/api/admin/finance/entries", headers=auth(OWNER), json=body)
+    assert r.status_code == 200
+    args = rpc_calls(fake, "finance_post_entry")[0][2]
+    assert args["p_op"] == "expense" and args["p_amount"] == 12.5 and args["p_category"] == "Аренда"
+    assert args["p_key"] == "fin-key-0001" and args["p_city"] is None
+
+def test_finance_post_rejects_unknown_op_and_bad_amount(fake):
+    h = auth(OWNER)
+    assert client.post("/api/admin/finance/entries", headers=h, json={"op_type": "refund", "amount": 5, "idempotency_key": "fin-key-0002"}).status_code == 422
+    assert client.post("/api/admin/finance/entries", headers=h, json={"op_type": "expense", "amount": 0, "idempotency_key": "fin-key-0003"}).status_code == 422
+    assert not rpc_calls(fake, "finance_post_entry")
+
+def test_finance_post_is_owner_only(fake):
+    body = {"op_type": "cash_in", "amount": 10, "idempotency_key": "fin-key-0004"}
+    assert client.post("/api/admin/finance/entries", headers=auth(HANN_ADMIN), json=body).status_code == 403
+    assert not rpc_calls(fake, "finance_post_entry")
+
+def test_finance_reverse_requires_reason_and_passes_key(fake):
+    h = auth(OWNER)
+    assert client.post("/api/admin/finance/entries/7/reverse", headers=h, json={"reason": "ок", "idempotency_key": "fin-key-0005"}).status_code == 422
+    r = client.post("/api/admin/finance/entries/7/reverse", headers=h, json={"reason": "Ошибочная сумма", "idempotency_key": "fin-key-0006"})
+    assert r.status_code == 200
+    args = rpc_calls(fake, "finance_reverse_entry")[0][2]
+    assert args["p_entry"] == 7 and args["p_reason"] == "Ошибочная сумма" and args["p_key"] == "fin-key-0006"
+
+def test_finance_reverse_is_owner_only(fake):
+    r = client.post("/api/admin/finance/entries/7/reverse", headers=auth(HANN_ADMIN),
+                    json={"reason": "Ошибочная сумма", "idempotency_key": "fin-key-0007"})
+    assert r.status_code == 403 and not rpc_calls(fake, "finance_reverse_entry")
+
+def test_finance_entry_not_found_maps_to_404():
+    assert main._map_error(400, "entry_not_found") == (404, "entry_not_found")

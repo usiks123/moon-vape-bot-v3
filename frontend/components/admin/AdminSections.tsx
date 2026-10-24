@@ -293,7 +293,6 @@ function ProductSheet({ product, owner, catName, onClose, actions }: any) {
   const [price, setPrice] = useState(product.price == null ? '' : String(product.price))
   const [cost, setCost] = useState(product.cost_price == null ? '' : String(product.cost_price))
   const [active, setActive] = useState(!!product.active)
-  const [refEx, setRefEx] = useState(!!product.referral_excluded)
   const [tiers, setTiers] = useState<any[]>((product.tiers || []).map((t: any) => ({ min: t.min, max: t.max, price: String(t.price) })))
   const [newVars, setNewVars] = useState('')
   const [vp, setVp] = useState<Record<string, string>>({})
@@ -306,7 +305,6 @@ function ProductSheet({ product, owner, catName, onClose, actions }: any) {
   const savePrices = () => run(async () => {
     const ok = await actions.onSavePrices({ price: num(price), cost_price: num(cost) })
     if (ok && active !== !!product.active) await actions.onSaveProduct({ active })
-    if (ok && refEx !== !!product.referral_excluded) await actions.onSaveProduct({ referral_excluded: refEx })
   })
   const saveTiers = () => run(() => actions.onSaveTiers(tiers.map(t => ({ min: t.min, price: num(t.price) ?? -1 }))))
   // Несколько вкусов сразу: дубли (уже есть в товаре или повтор в списке) пропускаются.
@@ -335,7 +333,6 @@ function ProductSheet({ product, owner, catName, onClose, actions }: any) {
         <label className="mv-label">Себестоимость, € (видит только владелец)</label>
         <input className="mv-input" type="text" inputMode="decimal" value={cost} onChange={e => setCost(e.target.value)} />
         <label className="mv-check"><input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />Товар активен (выключите — уйдёт из продажи, не удаляясь)</label>
-        <label className="mv-check"><input type="checkbox" checked={refEx} onChange={e => setRefEx(e.target.checked)} />Не участвует в акции «Приведи друга» (не засчитывается как покупка и не выдаётся бонусом)</label>
         <button className="mv-btn" disabled={saving} onClick={savePrices}>Сохранить цены</button>
       </>}
     </div>
